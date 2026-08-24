@@ -1,3 +1,5 @@
 work/
-*.vvp
+sim.vvp
+waveform.vcd
 *.vcd
+*.vvp
