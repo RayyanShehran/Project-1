@@ -1,19 +1,25 @@
 import subprocess
 from pathlib import Path
 
+# Put generated simulation files under work/adder
 ROOT = Path(__file__).resolve().parents[1]
 WORK_DIR = ROOT / "work" / "adder"
 VVP_FILE = WORK_DIR / "sim.vvp"
 
 def run(cmd):
+    # Print the command before running it
     print("+", " ".join(str(x) for x in cmd))
+    
     result = subprocess.run(cmd, cwd=ROOT)
+
+    # If the command fails, raise an error
     if result.returncode != 0:
         raise SystemExit(result.returncode)
 
 def main():
     WORK_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Compile the SystemVerilog files with Icarus
     run([
         "iverilog",
         "-g2012",
@@ -22,7 +28,8 @@ def main():
         "-f",
         "blocks/adder/files.f",
     ])
-
+    
+    # Run the compiled simulation
     run([
         "vvp",
         str(VVP_FILE),

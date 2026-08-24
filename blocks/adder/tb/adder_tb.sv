@@ -31,7 +31,7 @@ module adder_tb;
     endtask
 
     initial begin
-        $dumpfile("waveform.vcd");
+        $dumpfile("work/adder/waveform.vcd");
         $dumpvars(0, adder_tb);
 
         check(8'd0,   8'd0);
