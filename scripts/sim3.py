@@ -24,17 +24,20 @@ class Simulator(Protocol):
 
 
 # Run one command and stop the script if it fails.
-def run_cmd(cmd, dry_run=False):
+def run_cmd(cmd, dry_run=False, timeout_sec=None):
     print("+", " ".join(str(x) for x in cmd))
 
     if dry_run:
         return
 
-    result = subprocess.run(cmd, cwd=ROOT)
+    try:
+        result = subprocess.run(cmd, cwd=ROOT, timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        print(f"ERROR: command timed out after {timeout_sec} seconds")
+        raise SystemExit(1)
 
     if result.returncode != 0:
         raise SystemExit(result.returncode)
-
 
 # Read block settings from blocks/<block>/block.yaml.
 def load_block_config(block_name):
@@ -90,13 +93,13 @@ class IcarusSimulator:
             str(cfg["vvp_file"]),
             "-f",
             cfg["sources"],
-        ], dry_run)
+        ], dry_run, cfg["timeout_sec"])
 
     def run(self, cfg, dry_run=False):
         run_cmd([
             "vvp",
             str(cfg["vvp_file"]),
-        ], dry_run)
+        ], dry_run, cfg["timeout_sec"])
 
 
 # Verilator flow: build a native executable, then run it.
@@ -118,12 +121,12 @@ class VerilatorSimulator:
             cfg["sources"],
             "--top-module",
             cfg["top"],
-        ], dry_run)
+        ], dry_run, cfg["timeout_sec"])
 
     def run(self, cfg, dry_run=False):
         run_cmd([
             str(cfg["verilator_obj_dir"] / f"V{cfg['top']}"),
-        ], dry_run)
+        ], dry_run, cfg["timeout_sec"])
 
 
 # Simple registry for the simulators this tool supports.
