@@ -24,8 +24,11 @@ class Simulator(Protocol):
 
 
 # Run one command and stop the script if it fails.
-def run_cmd(cmd, dry_run=False, timeout_sec=None):
+def run_cmd(cmd, cfg=None, dry_run=False, timeout_sec=None):
     print("+", " ".join(str(x) for x in cmd))
+    if cfg is not None:
+        with cfg["log_file"].open("a") as f:
+            f.write("+ " + " ".join(str(x) for x in cmd) + "\n")
 
     if dry_run:
         return
@@ -71,9 +74,7 @@ def load_block_config(block_name):
         "top": cfg["top"],
         "sources": str(sources),
         "timeout_sec": cfg["timeout_sec"],
-        "work_dir": work_dir,
-        "vvp_file": work_dir / "sim.vvp",
-        "waveform": work_dir / "waveform.vcd",
+        "base_work_dir": work_dir,
         "verilator_obj_dir": Path(f"/tmp/rtlflow_{cfg['name']}_obj"),
     }
 
@@ -93,13 +94,13 @@ class IcarusSimulator:
             str(cfg["vvp_file"]),
             "-f",
             cfg["sources"],
-        ], dry_run, cfg["timeout_sec"])
+        ], cfg, dry_run, cfg["timeout_sec"])
 
     def run(self, cfg, dry_run=False):
         run_cmd([
             "vvp",
             str(cfg["vvp_file"]),
-        ], dry_run, cfg["timeout_sec"])
+        ], cfg, dry_run, cfg["timeout_sec"])
 
 
 # Verilator flow: build a native executable, then run it.
@@ -121,12 +122,12 @@ class VerilatorSimulator:
             cfg["sources"],
             "--top-module",
             cfg["top"],
-        ], dry_run, cfg["timeout_sec"])
+        ], cfg, dry_run, cfg["timeout_sec"])
 
     def run(self, cfg, dry_run=False):
         run_cmd([
             str(cfg["verilator_obj_dir"] / f"V{cfg['top']}"),
-        ], dry_run, cfg["timeout_sec"])
+        ], cfg, dry_run, cfg["timeout_sec"])
 
 
 # Simple registry for the simulators this tool supports.
@@ -161,8 +162,12 @@ def main():
 
     if args.command == "sim":
         cfg = load_block_config(args.block)
+        cfg["work_dir"] = cfg["base_work_dir"] / args.sim
         cfg["work_dir"].mkdir(parents=True, exist_ok=True)
-
+        cfg["vvp_file"] = cfg["work_dir"] / "sim.vvp"
+        cfg["waveform"] = cfg["work_dir"] / "waveform.vcd"
+        
+        cfg["log_file"] = cfg["work_dir"] / "run.log"
         sim = SIMULATORS[args.sim]
 
         if not sim.available():
