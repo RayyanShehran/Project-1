@@ -40,16 +40,34 @@ def run_cmd(cmd, dry_run=False):
 def load_block_config(block_name):
     config_path = ROOT / "blocks" / block_name / "block.yaml"
 
+    if not config_path.exists():
+        print(f"ERROR: missing config file: {config_path}")
+        raise SystemExit(1)
+
     with config_path.open() as f:
         cfg = yaml.safe_load(f)
 
+    required_fields = ["name", "top", "sources", "timeout_sec"]
+
+    for field in required_fields:
+        if field not in cfg:
+            print(f"ERROR: {config_path} missing required field: {field}")
+            raise SystemExit(1)
+
     block_dir = ROOT / "blocks" / cfg["name"]
+    sources = block_dir / cfg["sources"]
+
+    if not sources.exists():
+        print(f"ERROR: source file list does not exist: {sources}")
+        raise SystemExit(1)
+
     work_dir = ROOT / "work" / cfg["name"]
 
     return {
         "name": cfg["name"],
         "top": cfg["top"],
-        "sources": str(block_dir / cfg["sources"]),
+        "sources": str(sources),
+        "timeout_sec": cfg["timeout_sec"],
         "work_dir": work_dir,
         "vvp_file": work_dir / "sim.vvp",
         "waveform": work_dir / "waveform.vcd",
