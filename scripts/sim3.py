@@ -8,6 +8,25 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 
+class RtlFlowError(Exception):
+    pass
+
+
+class ToolNotFound(RtlFlowError):
+    pass
+
+
+class CompileError(RtlFlowError):
+    pass
+
+
+class SimulationFailed(RtlFlowError):
+    pass
+
+
+class Timeout(RtlFlowError):
+    pass
+
 
 # Shared shape every simulator must follow.
 class Simulator(Protocol):
@@ -24,7 +43,7 @@ class Simulator(Protocol):
 
 
 # Run one command and stop the script if it fails.
-def run_cmd(cmd, cfg=None, dry_run=False, timeout_sec=None):
+def run_cmd(cmd, cfg=None, dry_run=False, timeout_sec=None, phase="run"):
     command_text = "+ " + " ".join(str(x) for x in cmd)
     print(command_text)
 
@@ -51,7 +70,7 @@ def run_cmd(cmd, cfg=None, dry_run=False, timeout_sec=None):
             with cfg["log_file"].open("a") as f:
                 f.write(message + "\n")
 
-        raise SystemExit(1)
+        raise Timeout(message)
 
     if result.stdout:
         print(result.stdout, end="")
@@ -66,15 +85,16 @@ def run_cmd(cmd, cfg=None, dry_run=False, timeout_sec=None):
                 f.write(result.stderr)
 
     if result.returncode != 0:
-        raise SystemExit(result.returncode)
+        if phase == "build":
+            raise CompileError(f"build failed with exit code {result.returncode}")
+        raise SimulationFailed(f"simulation failed with exit code {result.returncode}")
 
 # Read block settings from blocks/<block>/block.yaml.
 def load_block_config(block_name):
     config_path = ROOT / "blocks" / block_name / "block.yaml"
 
     if not config_path.exists():
-        print(f"ERROR: missing config file: {config_path}")
-        raise SystemExit(1)
+        raise ToolNotFound(f"simulator not available: {sim.name}")
 
     with config_path.open() as f:
         cfg = yaml.safe_load(f)
@@ -120,13 +140,13 @@ class IcarusSimulator:
             str(cfg["vvp_file"]),
             "-f",
             cfg["sources"],
-        ], cfg, dry_run, cfg["timeout_sec"])
+        ], cfg, dry_run, cfg["timeout_sec"], phase="build")
 
     def run(self, cfg, dry_run=False):
         run_cmd([
             "vvp",
             str(cfg["vvp_file"]),
-        ], cfg, dry_run, cfg["timeout_sec"])
+        ], cfg, dry_run, cfg["timeout_sec"], phase="run")
 
 
 # Verilator flow: build a native executable, then run it.
@@ -148,12 +168,12 @@ class VerilatorSimulator:
             cfg["sources"],
             "--top-module",
             cfg["top"],
-        ], cfg, dry_run, cfg["timeout_sec"])
+        ], cfg, dry_run, cfg["timeout_sec"], phase="build")
 
     def run(self, cfg, dry_run=False):
         run_cmd([
             str(cfg["verilator_obj_dir"] / f"V{cfg['top']}"),
-        ], cfg, dry_run, cfg["timeout_sec"])
+        ], cfg, dry_run, cfg["timeout_sec"], phase="run")
 
 
 # Simple registry for the simulators this tool supports.
@@ -200,8 +220,12 @@ def main():
             print(f"ERROR: simulator not available: {sim.name}")
             raise SystemExit(1)
 
-        sim.build(cfg, args.dry_run)
-        sim.run(cfg, args.dry_run)
+        try:
+            sim.build(cfg, args.dry_run)
+            sim.run(cfg, args.dry_run)
+        except RtlFlowError as e:
+            print(f"ERROR [{type(e).__name__}]: {e}")
+            raise SystemExit(1)
 
         if args.dry_run:
             print("Dry run only; no files written")
