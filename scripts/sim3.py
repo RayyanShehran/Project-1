@@ -4,10 +4,9 @@ import subprocess
 from pathlib import Path
 from typing import Protocol
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
-WORK_DIR = ROOT / "work" / "adder"
-VVP_FILE = WORK_DIR / "sim.vvp"
-VERILATOR_OBJ_DIR = Path("/tmp/rtlflow_adder_obj")
 
 
 # Shared shape every simulator must follow.
@@ -17,10 +16,10 @@ class Simulator(Protocol):
     def available(self) -> bool:
         ...
 
-    def build(self, dry_run=False) -> None:
+    def build(self, cfg, dry_run=False) -> None:
         ...
 
-    def run(self, dry_run=False) -> None:
+    def run(self, cfg, dry_run=False) -> None:
         ...
 
 
@@ -37,6 +36,27 @@ def run_cmd(cmd, dry_run=False):
         raise SystemExit(result.returncode)
 
 
+# Read block settings from blocks/<block>/block.yaml.
+def load_block_config(block_name):
+    config_path = ROOT / "blocks" / block_name / "block.yaml"
+
+    with config_path.open() as f:
+        cfg = yaml.safe_load(f)
+
+    block_dir = ROOT / "blocks" / cfg["name"]
+    work_dir = ROOT / "work" / cfg["name"]
+
+    return {
+        "name": cfg["name"],
+        "top": cfg["top"],
+        "sources": str(block_dir / cfg["sources"]),
+        "work_dir": work_dir,
+        "vvp_file": work_dir / "sim.vvp",
+        "waveform": work_dir / "waveform.vcd",
+        "verilator_obj_dir": Path(f"/tmp/rtlflow_{cfg['name']}_obj"),
+    }
+
+
 # Icarus flow: compile with iverilog, then run with vvp.
 class IcarusSimulator:
     name = "icarus"
@@ -44,20 +64,20 @@ class IcarusSimulator:
     def available(self):
         return shutil.which("iverilog") is not None and shutil.which("vvp") is not None
 
-    def build(self, dry_run=False):
+    def build(self, cfg, dry_run=False):
         run_cmd([
             "iverilog",
             "-g2012",
             "-o",
-            str(VVP_FILE),
+            str(cfg["vvp_file"]),
             "-f",
-            "blocks/adder/files.f",
+            cfg["sources"],
         ], dry_run)
 
-    def run(self, dry_run=False):
+    def run(self, cfg, dry_run=False):
         run_cmd([
             "vvp",
-            str(VVP_FILE),
+            str(cfg["vvp_file"]),
         ], dry_run)
 
 
@@ -68,23 +88,23 @@ class VerilatorSimulator:
     def available(self):
         return shutil.which("verilator") is not None
 
-    def build(self, dry_run=False):
+    def build(self, cfg, dry_run=False):
         run_cmd([
             "verilator",
             "--binary",
             "--timing",
             "--trace",
             "-Mdir",
-            str(VERILATOR_OBJ_DIR),
+            str(cfg["verilator_obj_dir"]),
             "-f",
-            "blocks/adder/files.f",
+            cfg["sources"],
             "--top-module",
-            "adder_tb",
+            cfg["top"],
         ], dry_run)
 
-    def run(self, dry_run=False):
+    def run(self, cfg, dry_run=False):
         run_cmd([
-            str(VERILATOR_OBJ_DIR / "Vadder_tb"),
+            str(cfg["verilator_obj_dir"] / f"V{cfg['top']}"),
         ], dry_run)
 
 
@@ -100,10 +120,11 @@ def main():
 
     # Commands:
     #   list-sims
-    #   sim --sim icarus/verilator
+    #   sim --block adder --sim icarus/verilator
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     sim_parser = subparsers.add_parser("sim")
+    sim_parser.add_argument("--block", default="adder")
     sim_parser.add_argument("--sim", choices=SIMULATORS.keys(), default="icarus")
     sim_parser.add_argument("--dry-run", action="store_true")
 
@@ -118,7 +139,8 @@ def main():
         return
 
     if args.command == "sim":
-        WORK_DIR.mkdir(parents=True, exist_ok=True)
+        cfg = load_block_config(args.block)
+        cfg["work_dir"].mkdir(parents=True, exist_ok=True)
 
         sim = SIMULATORS[args.sim]
 
@@ -126,13 +148,13 @@ def main():
             print(f"ERROR: simulator not available: {sim.name}")
             raise SystemExit(1)
 
-        sim.build(args.dry_run)
-        sim.run(args.dry_run)
+        sim.build(cfg, args.dry_run)
+        sim.run(cfg, args.dry_run)
 
         if args.dry_run:
             print("Dry run only; no files written")
         else:
-            print(f"Wrote {WORK_DIR / 'waveform.vcd'}")
+            print(f"Wrote {cfg['waveform']}")
 
 
 if __name__ == "__main__":
