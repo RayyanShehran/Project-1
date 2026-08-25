@@ -10,6 +10,7 @@ VVP_FILE = WORK_DIR / "sim.vvp"
 VERILATOR_OBJ_DIR = Path("/tmp/rtlflow_adder_obj")
 
 
+# Shared shape every simulator must follow.
 class Simulator(Protocol):
     name: str
 
@@ -23,6 +24,7 @@ class Simulator(Protocol):
         ...
 
 
+# Run one command and stop the script if it fails.
 def run_cmd(cmd, dry_run=False):
     print("+", " ".join(str(x) for x in cmd))
 
@@ -35,6 +37,7 @@ def run_cmd(cmd, dry_run=False):
         raise SystemExit(result.returncode)
 
 
+# Icarus flow: compile with iverilog, then run with vvp.
 class IcarusSimulator:
     name = "icarus"
 
@@ -58,6 +61,7 @@ class IcarusSimulator:
         ], dry_run)
 
 
+# Verilator flow: build a native executable, then run it.
 class VerilatorSimulator:
     name = "verilator"
 
@@ -84,6 +88,7 @@ class VerilatorSimulator:
         ], dry_run)
 
 
+# Simple registry for the simulators this tool supports.
 SIMULATORS = {
     "icarus": IcarusSimulator(),
     "verilator": VerilatorSimulator(),
@@ -92,6 +97,10 @@ SIMULATORS = {
 
 def main():
     parser = argparse.ArgumentParser()
+
+    # Commands:
+    #   list-sims
+    #   sim --sim icarus/verilator
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     sim_parser = subparsers.add_parser("sim")
@@ -124,3 +133,7 @@ def main():
             print("Dry run only; no files written")
         else:
             print(f"Wrote {WORK_DIR / 'waveform.vcd'}")
+
+
+if __name__ == "__main__":
+    main()
