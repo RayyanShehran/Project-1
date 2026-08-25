@@ -25,19 +25,45 @@ class Simulator(Protocol):
 
 # Run one command and stop the script if it fails.
 def run_cmd(cmd, cfg=None, dry_run=False, timeout_sec=None):
-    print("+", " ".join(str(x) for x in cmd))
+    command_text = "+ " + " ".join(str(x) for x in cmd)
+    print(command_text)
+
     if cfg is not None:
         with cfg["log_file"].open("a") as f:
-            f.write("+ " + " ".join(str(x) for x in cmd) + "\n")
+            f.write(command_text + "\n")
 
     if dry_run:
         return
 
     try:
-        result = subprocess.run(cmd, cwd=ROOT, timeout=timeout_sec)
+        result = subprocess.run(
+            cmd,
+            cwd=ROOT,
+            timeout=timeout_sec,
+            text=True,
+            capture_output=True,
+        )
     except subprocess.TimeoutExpired:
-        print(f"ERROR: command timed out after {timeout_sec} seconds")
+        message = f"ERROR: command timed out after {timeout_sec} seconds"
+        print(message)
+
+        if cfg is not None:
+            with cfg["log_file"].open("a") as f:
+                f.write(message + "\n")
+
         raise SystemExit(1)
+
+    if result.stdout:
+        print(result.stdout, end="")
+        if cfg is not None:
+            with cfg["log_file"].open("a") as f:
+                f.write(result.stdout)
+
+    if result.stderr:
+        print(result.stderr, end="")
+        if cfg is not None:
+            with cfg["log_file"].open("a") as f:
+                f.write(result.stderr)
 
     if result.returncode != 0:
         raise SystemExit(result.returncode)
