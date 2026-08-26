@@ -1,5 +1,27 @@
 from rtlflow.cli import SIMULATORS, load_block_config
-from rtlflow.cli import IcarusSimulator
+from rtlflow.cli import IcarusSimulator, VerilatorSimulator
+
+
+def test_verilator_dry_run_prints_expected_commands(capsys):
+    cfg = load_block_config("adder")
+    cfg["work_dir"] = cfg["base_work_dir"] / "verilator"
+    cfg["work_dir"].mkdir(parents=True, exist_ok=True)
+    cfg["vvp_file"] = cfg["work_dir"] / "sim.vvp"
+    cfg["waveform"] = cfg["work_dir"] / "waveform.vcd"
+    cfg["log_file"] = cfg["work_dir"] / "run.log"
+
+    sim = VerilatorSimulator()
+    sim.build(cfg, dry_run=True)
+    sim.run(cfg, dry_run=True)
+
+    output = capsys.readouterr().out
+
+    assert "verilator" in output
+    assert "--binary" in output
+    assert "--timing" in output
+    assert "--trace" in output
+    assert "--top-module adder_tb" in output
+    assert "/tmp/rtlflow_adder_obj/Vadder_tb" in output
 
 
 def test_icarus_dry_run_prints_expected_commands(capsys):
