@@ -1,5 +1,42 @@
 from rtlflow.cli import SIMULATORS, load_block_config
 from rtlflow.cli import IcarusSimulator, VerilatorSimulator
+import pytest
+
+
+@pytest.mark.integration
+def test_icarus_integration():
+    cfg = load_block_config("adder")
+    cfg["work_dir"] = cfg["base_work_dir"] / "icarus"
+    cfg["work_dir"].mkdir(parents=True, exist_ok=True)
+    cfg["vvp_file"] = cfg["work_dir"] / "sim.vvp"
+    cfg["waveform"] = cfg["work_dir"] / "waveform.vcd"
+    cfg["log_file"] = cfg["work_dir"] / "run.log"
+
+    sim = IcarusSimulator()
+
+    if not sim.available():
+        pytest.skip("Icarus is not installed")
+
+    sim.build(cfg)
+    sim.run(cfg)
+
+
+@pytest.mark.integration
+def test_verilator_integration():
+    cfg = load_block_config("adder")
+    cfg["work_dir"] = cfg["base_work_dir"] / "verilator"
+    cfg["work_dir"].mkdir(parents=True, exist_ok=True)
+    cfg["vvp_file"] = cfg["work_dir"] / "sim.vvp"
+    cfg["waveform"] = cfg["work_dir"] / "waveform.vcd"
+    cfg["log_file"] = cfg["work_dir"] / "run.log"
+
+    sim = VerilatorSimulator()
+
+    if not sim.available():
+        pytest.skip("Verilator is not installed")
+
+    sim.build(cfg)
+    sim.run(cfg)
 
 
 def test_verilator_dry_run_prints_expected_commands(capsys):
