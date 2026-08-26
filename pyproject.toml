@@ -1,0 +1,14 @@
+[project]
+name = "rtlflow"
+version = "0.1.0"
+description = "Small RTL simulation flow tool"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML",
+]
+
+[project.scripts]
+rtlflow = "rtlflow.cli:main"
+
+[tool.setuptools]
+packages = ["rtlflow"]
