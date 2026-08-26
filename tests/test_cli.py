@@ -93,3 +93,51 @@ def test_load_adder_config():
     assert cfg["top"] == "adder_tb"
     assert cfg["timeout_sec"] == 60
     assert cfg["sources"].endswith("blocks/adder/files.f")
+
+
+def test_load_fifo_config():
+    cfg = load_block_config("fifo")
+
+    assert cfg["name"] == "fifo"
+    assert cfg["top"] == "fifo_tb"
+    assert cfg["timeout_sec"] == 60
+    assert cfg["sources"].endswith("blocks/fifo/files.f")
+
+
+def test_icarus_fifo_dry_run_prints_expected_commands(capsys):
+    cfg = load_block_config("fifo")
+    cfg["work_dir"] = cfg["base_work_dir"] / "icarus"
+    cfg["work_dir"].mkdir(parents=True, exist_ok=True)
+    cfg["vvp_file"] = cfg["work_dir"] / "sim.vvp"
+    cfg["waveform"] = cfg["work_dir"] / "waveform.vcd"
+    cfg["log_file"] = cfg["work_dir"] / "run.log"
+
+    sim = IcarusSimulator()
+    sim.build(cfg, dry_run=True)
+    sim.run(cfg, dry_run=True)
+
+    output = capsys.readouterr().out
+
+    assert "iverilog" in output
+    assert "blocks/fifo/files.f" in output
+    assert "vvp" in output
+
+
+def test_verilator_fifo_dry_run_prints_expected_commands(capsys):
+    cfg = load_block_config("fifo")
+    cfg["work_dir"] = cfg["base_work_dir"] / "verilator"
+    cfg["work_dir"].mkdir(parents=True, exist_ok=True)
+    cfg["vvp_file"] = cfg["work_dir"] / "sim.vvp"
+    cfg["waveform"] = cfg["work_dir"] / "waveform.vcd"
+    cfg["log_file"] = cfg["work_dir"] / "run.log"
+
+    sim = VerilatorSimulator()
+    sim.build(cfg, dry_run=True)
+    sim.run(cfg, dry_run=True)
+
+    output = capsys.readouterr().out
+
+    assert "verilator" in output
+    assert "blocks/fifo/files.f" in output
+    assert "--top-module fifo_tb" in output
+    assert "/tmp/rtlflow_fifo_obj/Vfifo_tb" in output
