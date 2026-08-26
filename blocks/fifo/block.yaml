@@ -1,0 +1,4 @@
+name: fifo
+top: fifo_tb
+sources: files.f
+timeout_sec: 60
