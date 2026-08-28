@@ -184,6 +184,21 @@ SIMULATORS = {
 }
 
 
+def classify_output(text):
+    lowered = text.lower()
+
+    if "unknown module type" in lowered or "elaboration" in lowered:
+        return "ElaborationError"
+
+    if "syntax error" in lowered or "invalid module item" in lowered:
+        return "CompileError"
+
+    if "fail" in lowered:
+        return "SimulationFailed"
+
+    return "Unknown"
+
+
 def main():
     parser = argparse.ArgumentParser()
 

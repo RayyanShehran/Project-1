@@ -1,0 +1,2 @@
+blocks/adder/tb/adder_tb.sv:10: error: Unknown module type: adder
+2 error(s) during elaboration.

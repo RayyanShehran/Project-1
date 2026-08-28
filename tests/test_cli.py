@@ -1,5 +1,6 @@
 from rtlflow.cli import SIMULATORS, load_block_config
 from rtlflow.cli import IcarusSimulator, VerilatorSimulator
+from rtlflow.cli import SIMULATORS, load_block_config, classify_output
 import pytest
 
 

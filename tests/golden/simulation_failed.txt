@@ -1,0 +1,2 @@
+FAIL: 1 + 1 gave 0, expected 2
+FAIL: 1 errors
