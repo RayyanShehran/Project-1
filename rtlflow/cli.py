@@ -94,7 +94,8 @@ def load_block_config(block_name):
     config_path = ROOT / "blocks" / block_name / "block.yaml"
 
     if not config_path.exists():
-        raise ToolNotFound(f"simulator not available: {sim.name}")
+        print(f"ERROR: missing config file: {config_path}")
+        raise SystemExit(1)
 
     with config_path.open() as f:
         cfg = yaml.safe_load(f)
