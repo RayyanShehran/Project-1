@@ -1,4 +1,7 @@
 name: fifo
 top: fifo_tb
 sources: files.f
+parameters:
+  WIDTH: 8
+  DEPTH: 4
 timeout_sec: 60

@@ -1,9 +1,10 @@
 `timescale 1ns/1ps
 
-module fifo_tb;
+module fifo_tb #(
+    parameter int WIDTH = 8,
+    parameter int DEPTH = 4
+);
 
-    localparam int WIDTH = 8;
-    localparam int DEPTH = 4;
     localparam time CLK_PERIOD = 10ns;
 
     logic clk = 1'b0;

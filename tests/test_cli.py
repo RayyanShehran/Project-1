@@ -54,6 +54,7 @@ def test_load_adder_config():
     assert cfg["name"] == "adder"
     assert cfg["top"] == "adder_tb"
     assert cfg["timeout_sec"] == 60
+    assert cfg["parameters"] == {"WIDTH": 8}
     assert cfg["sources"].endswith("blocks/adder/files.f")
 
 
@@ -63,6 +64,7 @@ def test_load_fifo_config():
     assert cfg["name"] == "fifo"
     assert cfg["top"] == "fifo_tb"
     assert cfg["timeout_sec"] == 60
+    assert cfg["parameters"] == {"WIDTH": 8, "DEPTH": 4}
     assert cfg["sources"].endswith("blocks/fifo/files.f")
 
 
@@ -78,6 +80,7 @@ def test_icarus_dry_run_prints_expected_commands(capsys):
     assert "iverilog" in output
     assert "-g2012" in output
     assert "blocks/adder/files.f" in output
+    assert "-P WIDTH=8" in output
     assert "vvp" in output
 
 
@@ -95,6 +98,7 @@ def test_verilator_dry_run_prints_expected_commands(capsys):
     assert "--timing" in output
     assert "--trace" in output
     assert "--top-module adder_tb" in output
+    assert "-GWIDTH=8" in output
     assert "/tmp/rtlflow_adder_obj/Vadder_tb" in output
 
 
@@ -109,6 +113,8 @@ def test_icarus_fifo_dry_run_prints_expected_commands(capsys):
 
     assert "iverilog" in output
     assert "blocks/fifo/files.f" in output
+    assert "-P WIDTH=8" in output
+    assert "-P DEPTH=4" in output
     assert "vvp" in output
 
 
@@ -124,6 +130,8 @@ def test_verilator_fifo_dry_run_prints_expected_commands(capsys):
     assert "verilator" in output
     assert "blocks/fifo/files.f" in output
     assert "--top-module fifo_tb" in output
+    assert "-GWIDTH=8" in output
+    assert "-GDEPTH=4" in output
     assert "/tmp/rtlflow_fifo_obj/Vfifo_tb" in output
 
 

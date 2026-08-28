@@ -89,6 +89,25 @@ def run_cmd(cmd, cfg=None, dry_run=False, timeout_sec=None, phase="run"):
             raise CompileError(f"build failed with exit code {result.returncode}")
         raise SimulationFailed(f"simulation failed with exit code {result.returncode}")
 
+
+def parameter_args_for_icarus(parameters):
+    args = []
+
+    for name, value in parameters.items():
+        args.extend(["-P", f"{name}={value}"])
+
+    return args
+
+
+def parameter_args_for_verilator(parameters):
+    args = []
+
+    for name, value in parameters.items():
+        args.append(f"-G{name}={value}")
+
+    return args
+
+
 # Read block settings from blocks/<block>/block.yaml.
 def load_block_config(block_name):
     config_path = ROOT / "blocks" / block_name / "block.yaml"
@@ -120,6 +139,7 @@ def load_block_config(block_name):
         "name": cfg["name"],
         "top": cfg["top"],
         "sources": str(sources),
+        "parameters": cfg.get("parameters", {}),
         "timeout_sec": cfg["timeout_sec"],
         "base_work_dir": work_dir,
         "verilator_obj_dir": Path(f"/tmp/rtlflow_{cfg['name']}_obj"),
@@ -134,14 +154,16 @@ class IcarusSimulator:
         return shutil.which("iverilog") is not None and shutil.which("vvp") is not None
 
     def build(self, cfg, dry_run=False):
-        run_cmd([
+        cmd = [
             "iverilog",
             "-g2012",
             "-o",
             str(cfg["vvp_file"]),
             "-f",
             cfg["sources"],
-        ], cfg, dry_run, cfg["timeout_sec"], phase="build")
+        ]
+        cmd.extend(parameter_args_for_icarus(cfg["parameters"]))
+        run_cmd(cmd, cfg, dry_run, cfg["timeout_sec"], phase="build")
 
     def run(self, cfg, dry_run=False):
         run_cmd([
@@ -158,7 +180,7 @@ class VerilatorSimulator:
         return shutil.which("verilator") is not None
 
     def build(self, cfg, dry_run=False):
-        run_cmd([
+        cmd = [
             "verilator",
             "--binary",
             "--timing",
@@ -169,7 +191,10 @@ class VerilatorSimulator:
             cfg["sources"],
             "--top-module",
             cfg["top"],
-        ], cfg, dry_run, cfg["timeout_sec"], phase="build")
+        ]
+        cmd.extend(parameter_args_for_verilator(cfg["parameters"]))
+
+        run_cmd(cmd, cfg, dry_run, cfg["timeout_sec"], phase="build")
 
     def run(self, cfg, dry_run=False):
         run_cmd([

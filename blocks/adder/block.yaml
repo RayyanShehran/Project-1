@@ -1,4 +1,6 @@
 name: adder
 top: adder_tb
 sources: files.f
+parameters:
+  WIDTH: 8
 timeout_sec: 60

@@ -1,8 +1,8 @@
 `timescale 1ns/1ps
 
-module adder_tb;
-
-    localparam int WIDTH = 8;
+module adder_tb #(
+    parameter int WIDTH = 8
+);
 
     logic [WIDTH-1:0] a, b, sum;
     logic             carry_out;
