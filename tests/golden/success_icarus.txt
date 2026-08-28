@@ -1,0 +1,3 @@
+VCD info: dumpfile work/adder/waveform.vcd opened for output.
+PASS
+blocks/adder/tb/adder_tb.sv:60: $finish called at 55000 (1ps)

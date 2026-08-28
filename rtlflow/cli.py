@@ -196,6 +196,9 @@ def classify_output(text):
     if "fail" in lowered:
         return "SimulationFailed"
 
+    if "pass" in lowered:
+        return "Success"
+
     return "Unknown"
 
 
