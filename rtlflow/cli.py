@@ -7,6 +7,7 @@ from typing import Protocol
 
 import yaml
 
+from rtlflow.lint import VeribleLintStage, VerilatorLintStage
 from rtlflow.models import Finding, RunContext, Severity, StageResult, Status
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -302,9 +303,14 @@ SIMULATORS = {
     "verilator": VerilatorSimulationStage(),
 }
 
+LINTERS = {
+    "verilator": VerilatorLintStage(),
+    "verible": VeribleLintStage(),
+}
+
 STAGES = {
     stage.name: stage
-    for stage in SIMULATORS.values()
+    for stage in [*SIMULATORS.values(), *LINTERS.values()]
 }
 
 
@@ -339,6 +345,11 @@ def main():
     sim_parser.add_argument("--sim", choices=SIMULATORS.keys(), default="icarus")
     sim_parser.add_argument("--dry-run", action="store_true")
 
+    lint_parser = subparsers.add_parser("lint")
+    lint_parser.add_argument("--block", default="adder")
+    lint_parser.add_argument("--tool", choices=LINTERS.keys(), default="verilator")
+    lint_parser.add_argument("--dry-run", action="store_true")
+
     subparsers.add_parser("list-sims")
 
     args = parser.parse_args()
@@ -367,6 +378,34 @@ def main():
             print("Dry run only; no files written")
         else:
             print(f"Wrote {result.artifacts['waveform']}")
+
+    if args.command == "lint":
+        cfg = load_block_config(args.block)
+        lint_stage = LINTERS[args.tool]
+        ctx = RunContext(
+            run_id=lint_stage.name,
+            workdir=cfg["base_work_dir"] / lint_stage.name,
+        )
+        result = lint_stage.run(cfg, ctx, args.dry_run, ROOT)
+
+        for finding in result.findings:
+            location = finding.file
+            if finding.line is not None:
+                location = f"{location}:{finding.line}"
+                if finding.column is not None:
+                    location = f"{location}:{finding.column}"
+            print(
+                f"{finding.severity.value}: {location}: "
+                f"{finding.message} [{finding.rule_id}]"
+            )
+
+        print(
+            f"{result.stage} {result.status.value} "
+            f"{result.duration_sec:.1f}s {len(result.findings)} findings"
+        )
+
+        if result.status is not Status.PASS:
+            raise SystemExit(1)
 
 
 IcarusSimulator = IcarusSimulationStage
