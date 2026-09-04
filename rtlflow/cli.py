@@ -1,9 +1,11 @@
 import argparse
 import contextlib
 import io
+import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
@@ -517,6 +519,21 @@ def run_blocks(
     return results_docs
 
 
+def build_run_output_payload(results_docs):
+    failed = [doc for doc in results_docs if doc["status"] != Status.PASS.value]
+    cached = [doc for doc in results_docs if doc.get("cached")]
+    return {
+        "schema_version": 1,
+        "summary": {
+            "blocks": len(results_docs),
+            "passed": len(results_docs) - len(failed),
+            "failed": len(failed),
+            "cached": len(cached),
+        },
+        "blocks": results_docs,
+    }
+
+
 def finding_from_error(stage_name, cfg, error):
     return Finding(
         severity=Severity.ERROR,
@@ -730,6 +747,7 @@ def main():
     run_parser.add_argument("--jobs", type=int)
     run_parser.add_argument("--no-cache", action="store_true")
     run_parser.add_argument("--compare-to")
+    run_parser.add_argument("--output", choices=["text", "json"], default="text")
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--report", default="")
 
@@ -882,21 +900,40 @@ def main():
 
     if args.command == "run":
         blocks = select_run_blocks(args)
-        results_docs = run_blocks(
-            blocks,
-            args.flow,
-            only=args.only,
-            skip=args.skip,
-            continue_on_error=args.continue_on_error,
-            dry_run=args.dry_run,
-            report=args.report,
-            fail_fast=args.fail_fast,
-            jobs=args.jobs,
-            no_cache=args.no_cache,
-            config_path=args.config,
-        )
+        if args.output == "json":
+            progress = io.StringIO()
+            with contextlib.redirect_stdout(progress):
+                results_docs = run_blocks(
+                    blocks,
+                    args.flow,
+                    only=args.only,
+                    skip=args.skip,
+                    continue_on_error=args.continue_on_error,
+                    dry_run=args.dry_run,
+                    report=args.report,
+                    fail_fast=args.fail_fast,
+                    jobs=args.jobs,
+                    no_cache=args.no_cache,
+                    config_path=args.config,
+                )
+            print(progress.getvalue(), file=sys.stderr, end="")
+        else:
+            results_docs = run_blocks(
+                blocks,
+                args.flow,
+                only=args.only,
+                skip=args.skip,
+                continue_on_error=args.continue_on_error,
+                dry_run=args.dry_run,
+                report=args.report,
+                fail_fast=args.fail_fast,
+                jobs=args.jobs,
+                no_cache=args.no_cache,
+                config_path=args.config,
+            )
 
         failed = [doc for doc in results_docs if doc["status"] != Status.PASS.value]
+        message_stream = sys.stderr if args.output == "json" else sys.stdout
         if args.compare_to:
             try:
                 baseline = load_baseline(ROOT, args.compare_to)
@@ -910,14 +947,19 @@ def main():
                     f"{doc['block']} comparison: "
                     f"{len(comparison['new'])} NEW, "
                     f"{len(comparison['fixed'])} FIXED, "
-                    f"{len(comparison['unchanged'])} UNCHANGED"
+                    f"{len(comparison['unchanged'])} UNCHANGED",
+                    file=message_stream,
                 )
                 for item in comparison["new"]:
-                    print(f"NEW {item}")
-        print(
-            f"{len(results_docs)} blocks - "
-            f"{len(results_docs) - len(failed)} passed, {len(failed)} failed"
-        )
+                    print(f"NEW {item}", file=message_stream)
+        payload = build_run_output_payload(results_docs)
+        if args.output == "json":
+            print(json.dumps(payload, sort_keys=True))
+        else:
+            print(
+                f"{len(results_docs)} blocks - "
+                f"{len(results_docs) - len(failed)} passed, {len(failed)} failed"
+            )
         if failed:
             raise SystemExit(1)
 

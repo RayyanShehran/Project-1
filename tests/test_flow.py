@@ -5,6 +5,7 @@ from argparse import Namespace
 import pytest
 
 from rtlflow.cli import (
+    build_run_output_payload,
     discover_blocks,
     parse_block_list,
     run_blocks,
@@ -212,4 +213,20 @@ def test_run_blocks_preserves_per_block_results():
         "adder-run",
         "fifo-run",
         "counter-run",
+    }
+
+
+def test_build_run_output_payload_summarizes_json_mode():
+    payload = build_run_output_payload(
+        [
+            {"block": "adder", "status": "PASS", "cached": True},
+            {"block": "fifo", "status": "FAIL", "cached": False},
+        ]
+    )
+
+    assert payload["summary"] == {
+        "blocks": 2,
+        "passed": 1,
+        "failed": 1,
+        "cached": 1,
     }
