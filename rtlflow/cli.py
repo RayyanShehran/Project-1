@@ -9,6 +9,7 @@ import yaml
 
 from rtlflow.lint import VeribleLintStage, VerilatorLintStage
 from rtlflow.models import Finding, RunContext, Severity, StageResult, Status
+from rtlflow.waivers import apply_waivers, load_waivers
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -145,6 +146,12 @@ def load_block_config(block_name):
 
     work_dir = ROOT / "work" / cfg["name"]
 
+    try:
+        waivers = load_waivers(cfg.get("waivers", []), config_path)
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        raise SystemExit(1) from e
+
     return {
         "name": cfg["name"],
         "top": cfg["top"],
@@ -153,6 +160,7 @@ def load_block_config(block_name):
         "timeout_sec": cfg["timeout_sec"],
         "base_work_dir": work_dir,
         "verilator_obj_dir": Path(f"/tmp/rtlflow_{cfg['name']}_obj"),
+        "waivers": waivers,
     }
 
 
@@ -350,6 +358,10 @@ def main():
     lint_parser.add_argument("--tool", choices=LINTERS.keys(), default="verilator")
     lint_parser.add_argument("--dry-run", action="store_true")
 
+    waivers_parser = subparsers.add_parser("waivers")
+    waivers_parser.add_argument("--block", default="adder")
+    waivers_parser.add_argument("--audit", action="store_true")
+
     subparsers.add_parser("list-sims")
 
     args = parser.parse_args()
@@ -387,6 +399,12 @@ def main():
             workdir=cfg["base_work_dir"] / lint_stage.name,
         )
         result = lint_stage.run(cfg, ctx, args.dry_run, ROOT)
+        remaining_findings, audit = apply_waivers(result.findings, cfg["waivers"])
+        result.findings = remaining_findings
+        if audit.expired:
+            result.status = Status.FAIL
+        elif result.status is Status.FAIL and not result.findings:
+            result.status = Status.PASS
 
         for finding in result.findings:
             location = finding.file
@@ -399,12 +417,35 @@ def main():
                 f"{finding.message} [{finding.rule_id}]"
             )
 
+        for waiver in audit.expired:
+            print(f"expired waiver: {waiver.file}:{waiver.line or '*'} [{waiver.rule}]")
+        for waiver in audit.stale:
+            print(f"stale waiver: {waiver.file}:{waiver.line or '*'} [{waiver.rule}]")
+        if audit.waived_findings:
+            print(f"waived {len(audit.waived_findings)} findings")
+
         print(
             f"{result.stage} {result.status.value} "
             f"{result.duration_sec:.1f}s {len(result.findings)} findings"
         )
 
         if result.status is not Status.PASS:
+            raise SystemExit(1)
+
+    if args.command == "waivers":
+        if not args.audit:
+            parser.error("waivers currently supports only --audit")
+        cfg = load_block_config(args.block)
+        _remaining, audit = apply_waivers([], cfg["waivers"])
+        for waiver in audit.expired:
+            print(f"expired waiver: {waiver.file}:{waiver.line or '*'} [{waiver.rule}]")
+        for waiver in audit.stale:
+            print(f"stale waiver: {waiver.file}:{waiver.line or '*'} [{waiver.rule}]")
+        print(
+            f"waivers: {len(cfg['waivers'])} total, "
+            f"{len(audit.expired)} expired, {len(audit.stale)} stale"
+        )
+        if audit.expired or audit.stale:
             raise SystemExit(1)
 
 
