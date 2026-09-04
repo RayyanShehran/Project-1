@@ -38,6 +38,10 @@ def test_stage_result_keeps_fail_and_error_distinct():
     assert errored.status is Status.ERROR
 
 
+def test_cached_status_is_available_for_reused_runs():
+    assert Status.CACHED.value == "CACHED"
+
+
 def test_run_context_starts_with_empty_artifacts(tmp_path):
     ctx = RunContext(run_id="run-1", workdir=tmp_path)
 

@@ -138,7 +138,7 @@ def build_results_document(flow_result: dict, manifest: dict, gates: dict) -> di
     stage_results = flow_result["results"]
     summary = summarize_findings(stage_results)
     gate_failures = evaluate_gates(summary, gates)
-    stage_failed = flow_result["status"] is not Status.PASS
+    stage_failed = flow_result["status"] not in {Status.PASS, Status.CACHED}
     status = Status.FAIL.value if stage_failed or gate_failures else Status.PASS.value
     duration = sum(stage.duration_sec for stage in stage_results)
     return {

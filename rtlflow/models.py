@@ -17,6 +17,7 @@ class Status(Enum):
     FAIL = "FAIL"
     ERROR = "ERROR"
     SKIPPED = "SKIPPED"
+    CACHED = "CACHED"
 
 
 @dataclass(frozen=True)

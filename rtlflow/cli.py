@@ -13,6 +13,13 @@ from uuid import uuid4
 
 import yaml
 
+from rtlflow.cache import (
+    clear_cache,
+    compute_input_hash,
+    load_cached_results,
+    materialize_cached_results,
+    save_cached_results,
+)
 from rtlflow.checks import CHECKS, ChecksStage
 from rtlflow.lint import VeribleLintStage, VerilatorLintStage
 from rtlflow.models import Finding, RunContext, Severity, StageResult, Status
@@ -366,7 +373,37 @@ def run_block_with_results(
     continue_on_error=False,
     dry_run=False,
     report="",
+    no_cache=False,
 ):
+    cfg = load_block_config(block)
+    project_config = load_project_config()
+    manifest = capture_manifest(
+        ROOT,
+        [ROOT / "rtlflow.yaml", block_config_path(block)],
+    )
+    input_hash = compute_input_hash(
+        ROOT,
+        cfg,
+        flow,
+        project_config,
+        manifest.get("tools", {}),
+    )
+    if not no_cache:
+        cached = load_cached_results(ROOT, input_hash)
+        if cached is not None:
+            cache_source_run_id = cached.get("run_id")
+            cached["cache_source_run_id"] = cache_source_run_id
+            cached["run_id"] = make_run_id()
+            cached["input_hash"] = input_hash
+            workdir = cfg["base_work_dir"] / cached["run_id"]
+            results_path = materialize_cached_results(cached, workdir)
+            print(f"CACHED {block} from {cache_source_run_id}")
+            print(f"Wrote {results_path}")
+            for report_format in [item.strip() for item in report.split(",") if item.strip()]:
+                report_path = write_report(cached, workdir, report_format)
+                print(f"Wrote {report_path}")
+            return cached
+
     flow_result = run_flow(
         block,
         flow,
@@ -375,17 +412,15 @@ def run_block_with_results(
         continue_on_error=continue_on_error,
         dry_run=dry_run,
     )
-    project_config = load_project_config()
-    manifest = capture_manifest(
-        ROOT,
-        [ROOT / "rtlflow.yaml", block_config_path(block)],
-    )
     results_doc = build_results_document(
         flow_result,
         manifest,
         project_config.get("gates", {}),
     )
+    results_doc["input_hash"] = input_hash
+    results_doc["cached"] = False
     results_path = write_results_json(results_doc, flow_result["workdir"])
+    save_cached_results(ROOT, input_hash, results_doc)
     print(f"Wrote {results_path}")
     for report_format in [item.strip() for item in report.split(",") if item.strip()]:
         report_path = write_report(results_doc, flow_result["workdir"], report_format)
@@ -419,6 +454,7 @@ def run_blocks(
     report="",
     fail_fast=False,
     jobs=None,
+    no_cache=False,
     runner=run_block_with_results,
 ):
     jobs = jobs or os.cpu_count() or 1
@@ -432,6 +468,7 @@ def run_blocks(
             "continue_on_error": continue_on_error,
             "dry_run": dry_run,
             "report": report,
+            "no_cache": no_cache,
         }
         for block in blocks
     ]
@@ -675,10 +712,14 @@ def main():
     run_parser.add_argument("--continue-on-error", action="store_true")
     run_parser.add_argument("--fail-fast", action="store_true")
     run_parser.add_argument("--jobs", type=int)
+    run_parser.add_argument("--no-cache", action="store_true")
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--report", default="")
 
     subparsers.add_parser("list-flows")
+
+    cache_parser = subparsers.add_parser("cache")
+    cache_parser.add_argument("action", choices=["clear"])
 
     report_parser = subparsers.add_parser("report")
     report_parser.add_argument("results_json")
@@ -822,6 +863,7 @@ def main():
             report=args.report,
             fail_fast=args.fail_fast,
             jobs=args.jobs,
+            no_cache=args.no_cache,
         )
 
         failed = [doc for doc in results_docs if doc["status"] != Status.PASS.value]
@@ -831,6 +873,11 @@ def main():
         )
         if failed:
             raise SystemExit(1)
+
+    if args.command == "cache":
+        if args.action == "clear":
+            cleared = clear_cache(ROOT)
+            print("cache cleared" if cleared else "cache already empty")
 
     if args.command == "report":
         data = load_results_json(Path(args.results_json))
