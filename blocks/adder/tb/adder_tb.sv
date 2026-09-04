@@ -41,16 +41,11 @@ module adder_tb #(
         check(8'd127, 8'd128);
 
         for (int i = 0; i < 50; i++) begin
-            int unsigned temp_a;
-            int unsigned temp_b;
             logic [WIDTH-1:0] rand_a;
             logic [WIDTH-1:0] rand_b;
 
-            temp_a = $urandom_range(0, 255);
-            temp_b = $urandom_range(0, 255);
-
-            rand_a = temp_a[WIDTH-1:0];
-            rand_b = temp_b[WIDTH-1:0];
+            rand_a = WIDTH'($urandom_range(0, 255));
+            rand_b = WIDTH'($urandom_range(0, 255));
 
             check(rand_a, rand_b);
         end

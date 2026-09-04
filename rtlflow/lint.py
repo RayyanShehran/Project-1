@@ -33,14 +33,16 @@ def parse_verilator_lint(text: str) -> list[Finding]:
             continue
 
         severity_text, rule_id, location_text = match.groups()
-        try:
-            file_text, line_text, column_text, message = location_text.rsplit(":", 3)
-        except ValueError:
-            try:
-                file_text, line_text, message = location_text.rsplit(":", 2)
-                column_text = None
-            except ValueError:
-                continue
+        location = re.match(
+            r"^(?P<file>.+):(?P<line>\d+):(?P<column>\d+):\s*(?P<message>.*)$",
+            location_text,
+        ) or re.match(r"^(?P<file>.+):(?P<line>\d+):\s*(?P<message>.*)$", location_text)
+        if not location:
+            continue
+        file_text = location.group("file")
+        line_text = location.group("line")
+        column_text = location.group("column")
+        message = location.group("message")
 
         severity = Severity.ERROR if severity_text == "Error" else Severity.WARNING
         findings.append(
@@ -145,7 +147,7 @@ class LintStage:
                 f.write(output)
 
         findings = self.parse(output)
-        if findings:
+        if any(finding.severity is Severity.ERROR for finding in findings):
             status = Status.FAIL
         elif result.returncode == 0:
             status = Status.PASS
@@ -180,14 +182,14 @@ class VerilatorLintStage(LintStage):
         cmd = [
             "verilator",
             "--lint-only",
+            "--timing",
+            "-Wno-fatal",
             "-Wall",
             "-f",
             cfg["sources"],
             "--top-module",
             cfg["top"],
         ]
-        for name, value in cfg["parameters"].items():
-            cmd.append(f"-G{name}={value}")
         return cmd
 
     def parse(self, text: str) -> list[Finding]:

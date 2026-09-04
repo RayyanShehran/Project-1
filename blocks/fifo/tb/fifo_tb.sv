@@ -34,7 +34,7 @@ module fifo_tb #(
         .empty (empty)
     );
 
-    always #(CLK_PERIOD / 2) clk = ~clk;
+    always #(CLK_PERIOD / 2) clk <= ~clk;
 
     initial begin
         #(CLK_PERIOD * 1000);

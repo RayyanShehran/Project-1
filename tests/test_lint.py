@@ -39,6 +39,18 @@ def test_parse_verilator_clean_output():
     assert parse_verilator_lint("") == []
 
 
+def test_parse_verilator_warning_with_colon_in_message():
+    text = "%Warning-UNUSEDSIGNAL: blocks/adder/tb/adder_tb.sv:44:26: Bits of signal are not used: 'temp_a'[31:8]"
+
+    findings = parse_verilator_lint(text)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "UNUSEDSIGNAL"
+    assert findings[0].line == 44
+    assert findings[0].column == 26
+    assert findings[0].message == "Bits of signal are not used: 'temp_a'[31:8]"
+
+
 def test_parse_verible_warning():
     text = "blocks/counter/rtl/counter.sv:5:24: Signal names must use lower_snake_case [signal-name-style]"
 

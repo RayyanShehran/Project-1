@@ -1,8 +1,9 @@
 `timescale 1ns/1ps
 
-module counter_tb;
+module counter_tb #(
+    parameter int WIDTH = 4
+);
 
-    localparam int  WIDTH      = 4;
     localparam time CLK_PERIOD = 10ns;
 
     logic             clk = 1'b0;
@@ -21,7 +22,7 @@ module counter_tb;
     );
 
     // ---- Clock generator: toggles forever ----
-    always #(CLK_PERIOD/2) clk = ~clk;
+    always #(CLK_PERIOD/2) clk <= ~clk;
 
     // ---- Watchdog: kill the sim if it hangs ----
     initial begin

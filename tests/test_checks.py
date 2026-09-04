@@ -5,18 +5,13 @@ from rtlflow.checks import (
     ModuleFilenameMatchCheck,
     NoBareAlwaysCheck,
     ResetPortNamingCheck,
-    SourceText,
-    strip_comments_and_strings,
 )
 from rtlflow.models import RunContext, Severity, Status
+from rtlflow.syntax import parse_syntax_text
 
 
 def source(path, text):
-    return SourceText(
-        file=Path(path),
-        original=text,
-        sanitized=strip_comments_and_strings(text),
-    )
+    return parse_syntax_text(Path(path), text)
 
 
 def test_no_bare_always_ignores_comments_and_strings():

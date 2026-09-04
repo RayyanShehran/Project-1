@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from rtlflow.checks import strip_comments_and_strings
-
-
-MODULE_RE = re.compile(r"\bmodule\s+([A-Za-z_][A-Za-z0-9_$]*)\b", re.S)
-IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+from rtlflow.syntax import parse_syntax_file, parse_syntax_text
 
 
 @dataclass(frozen=True)
@@ -45,93 +40,62 @@ def find_source_files(path: Path) -> tuple[list[Path], Path | None]:
 
 
 def module_names(text: str) -> list[str]:
-    return [match.group(1) for match in MODULE_RE.finditer(strip_comments_and_strings(text))]
+    tree = parse_syntax_text(Path("<memory>"), text)
+    return [module.attrs["name"] for module in tree.find_all("ModuleDeclaration")]
 
 
 def instantiated_modules(text: str, known_modules: set[str]) -> set[str]:
-    sanitized = strip_comments_and_strings(text)
-    found = set()
-    for match in IDENT_RE.finditer(sanitized):
-        module_type = match.group(0)
-        if module_type not in known_modules:
-            continue
-        tail = sanitized[match.end() :]
-        index = 0
-        while index < len(tail) and tail[index].isspace():
-            index += 1
-        if index < len(tail) and tail[index] == "#":
-            index += 1
-            while index < len(tail) and tail[index].isspace():
-                index += 1
-            if index >= len(tail) or tail[index] != "(":
-                continue
-            depth = 0
-            while index < len(tail):
-                if tail[index] == "(":
-                    depth += 1
-                elif tail[index] == ")":
-                    depth -= 1
-                    if depth == 0:
-                        index += 1
-                        break
-                index += 1
-        while index < len(tail) and tail[index].isspace():
-            index += 1
-        instance = IDENT_RE.match(tail, index)
-        if not instance or instance.group(0) in known_modules:
-            continue
-        index = instance.end()
-        while index < len(tail) and tail[index].isspace():
-            index += 1
-        if index < len(tail) and tail[index] == "(":
-            found.add(module_type)
-    return found
+    tree = parse_syntax_text(Path("<memory>"), text, known_modules=known_modules)
+    return {
+        instance.attrs["module"]
+        for instance in tree.find_all("ModuleInstantiation")
+        if instance.attrs["module"] in known_modules
+    }
 
 
 def module_has_no_ports(text: str, module_name: str) -> bool:
-    sanitized = strip_comments_and_strings(text)
-    match = re.search(rf"\bmodule\s+{re.escape(module_name)}\b", sanitized)
-    if not match:
-        return False
-    semicolon = sanitized.find(";", match.end())
-    if semicolon == -1:
-        return False
-    declaration_tail = sanitized[match.end() : semicolon].strip()
-    if declaration_tail.startswith("#"):
-        close = declaration_tail.rfind(")")
-        declaration_tail = declaration_tail[close + 1 :].strip() if close != -1 else declaration_tail
-    if not declaration_tail:
-        return True
-    if declaration_tail.startswith("("):
-        return not declaration_tail.strip("() \t\r\n")
+    tree = parse_syntax_text(Path("<memory>"), text)
+    for module in tree.find_all("ModuleDeclaration"):
+        if module.attrs["name"] != module_name:
+            continue
+        return not tree.find_children(module, "PortDeclaration")
     return False
 
 
 def infer_adoption(path: Path) -> AdoptedConfig:
     path = path.resolve()
     sources, file_list = find_source_files(path)
-    modules_by_file = {}
-    for source in sources:
-        modules_by_file[source] = module_names(source.read_text())
+    first_pass_trees = {source: parse_syntax_file(source) for source in sources}
 
     known_modules = {
-        module
-        for modules in modules_by_file.values()
-        for module in modules
+        module.attrs["name"]
+        for tree in first_pass_trees.values()
+        for module in tree.find_all("ModuleDeclaration")
     }
-    instantiated = set()
-    for source in sources:
-        instantiated.update(instantiated_modules(source.read_text(), known_modules))
+    trees_by_file = {
+        source: parse_syntax_text(source, source.read_text(), known_modules=known_modules)
+        for source in sources
+    }
+    instantiated = {
+        instance.attrs["module"]
+        for tree in trees_by_file.values()
+        for instance in tree.find_all("ModuleInstantiation")
+        if instance.attrs["module"] in known_modules
+    }
 
     testbench_candidates = []
-    for source, modules in modules_by_file.items():
-        text = source.read_text()
-        source_instantiations = instantiated_modules(text, known_modules)
-        for module in modules:
-            if module_has_no_ports(text, module) and any(
-                candidate != module for candidate in source_instantiations
+    for tree in trees_by_file.values():
+        for module in tree.find_all("ModuleDeclaration"):
+            module_name = module.attrs["name"]
+            source_instantiations = {
+                instance.attrs["module"]
+                for instance in tree.find_children(module, "ModuleInstantiation")
+                if instance.attrs["module"] in known_modules
+            }
+            if not tree.find_children(module, "PortDeclaration") and any(
+                candidate != module_name for candidate in source_instantiations
             ):
-                testbench_candidates.append(module)
+                testbench_candidates.append(module_name)
 
     design_candidates = sorted((known_modules - set(testbench_candidates)) - instantiated)
     candidates = design_candidates or sorted(known_modules - instantiated) or sorted(known_modules)

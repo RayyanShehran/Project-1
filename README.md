@@ -46,9 +46,11 @@ Checks are configured in `rtlflow.yaml`. Current rules:
 - `no-bare-always`
 - `module-filename-match`
 
-Current limitation: custom checks use source scanning after stripping comments
-and strings. They are tested for the starter rules, but they do not yet use
-Verible JSON parse trees as the full project spec recommends.
+Current limitation: custom checks and adoption use a shared lightweight syntax
+tree after stripping comments and strings. When `verible-verilog-syntax` is
+available, its JSON export is captured on the syntax tree, but the starter
+rules still use the lightweight node extraction rather than a full Verible AST
+mapper.
 
 ## Flows
 
