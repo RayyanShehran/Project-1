@@ -1,7 +1,11 @@
 import argparse
+import contextlib
+import io
+import os
 import shutil
 import subprocess
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
@@ -397,6 +401,70 @@ def run_block_with_results(
     return results_doc
 
 
+def run_block_worker(kwargs):
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        results_doc = run_block_with_results(**kwargs)
+    return results_doc, output.getvalue()
+
+
+def run_blocks(
+    blocks,
+    flow,
+    *,
+    only=None,
+    skip=None,
+    continue_on_error=False,
+    dry_run=False,
+    report="",
+    fail_fast=False,
+    jobs=None,
+    runner=run_block_with_results,
+):
+    jobs = jobs or os.cpu_count() or 1
+    results_docs = []
+    run_kwargs = [
+        {
+            "block": block,
+            "flow": flow,
+            "only": only,
+            "skip": skip,
+            "continue_on_error": continue_on_error,
+            "dry_run": dry_run,
+            "report": report,
+        }
+        for block in blocks
+    ]
+
+    if jobs == 1 or len(blocks) <= 1 or runner is not run_block_with_results:
+        for kwargs in run_kwargs:
+            if len(blocks) > 1:
+                print(f"== {kwargs['block']} ==")
+            results_doc = runner(**kwargs)
+            results_docs.append(results_doc)
+            if fail_fast and results_doc["status"] != Status.PASS.value:
+                break
+        return results_docs
+
+    with ProcessPoolExecutor(max_workers=jobs) as executor:
+        futures = {
+            executor.submit(run_block_worker, kwargs): kwargs["block"]
+            for kwargs in run_kwargs
+        }
+        for future in as_completed(futures):
+            block = futures[future]
+            print(f"== {block} ==")
+            results_doc, output = future.result()
+            print(output, end="")
+            results_docs.append(results_doc)
+            if fail_fast and results_doc["status"] != Status.PASS.value:
+                for pending in futures:
+                    pending.cancel()
+                break
+
+    return results_docs
+
+
 def finding_from_error(stage_name, cfg, error):
     return Finding(
         severity=Severity.ERROR,
@@ -606,6 +674,7 @@ def main():
     run_parser.add_argument("--skip", action="append", default=[])
     run_parser.add_argument("--continue-on-error", action="store_true")
     run_parser.add_argument("--fail-fast", action="store_true")
+    run_parser.add_argument("--jobs", type=int)
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--report", default="")
 
@@ -743,22 +812,17 @@ def main():
 
     if args.command == "run":
         blocks = select_run_blocks(args)
-        results_docs = []
-        for block in blocks:
-            if len(blocks) > 1:
-                print(f"== {block} ==")
-            results_doc = run_block_with_results(
-                block,
-                args.flow,
-                only=args.only,
-                skip=args.skip,
-                continue_on_error=args.continue_on_error,
-                dry_run=args.dry_run,
-                report=args.report,
-            )
-            results_docs.append(results_doc)
-            if args.fail_fast and results_doc["status"] != Status.PASS.value:
-                break
+        results_docs = run_blocks(
+            blocks,
+            args.flow,
+            only=args.only,
+            skip=args.skip,
+            continue_on_error=args.continue_on_error,
+            dry_run=args.dry_run,
+            report=args.report,
+            fail_fast=args.fail_fast,
+            jobs=args.jobs,
+        )
 
         failed = [doc for doc in results_docs if doc["status"] != Status.PASS.value]
         print(

@@ -4,7 +4,13 @@ from argparse import Namespace
 
 import pytest
 
-from rtlflow.cli import discover_blocks, parse_block_list, run_flow, select_run_blocks
+from rtlflow.cli import (
+    discover_blocks,
+    parse_block_list,
+    run_blocks,
+    run_flow,
+    select_run_blocks,
+)
 from rtlflow.models import Finding, Severity, StageResult, Status
 
 
@@ -156,3 +162,54 @@ def test_select_run_blocks_rejects_all_with_blocks():
 
     with pytest.raises(SystemExit):
         select_run_blocks(args)
+
+
+def test_run_blocks_jobs_one_runs_all_blocks_serially():
+    seen = []
+
+    def runner(**kwargs):
+        seen.append(kwargs["block"])
+        return {"block": kwargs["block"], "status": "PASS", "run_id": kwargs["block"]}
+
+    results = run_blocks(["adder", "fifo"], "quick", jobs=1, runner=runner)
+
+    assert seen == ["adder", "fifo"]
+    assert [result["block"] for result in results] == ["adder", "fifo"]
+
+
+def test_run_blocks_fail_fast_stops_serial_execution():
+    seen = []
+
+    def runner(**kwargs):
+        seen.append(kwargs["block"])
+        status = "FAIL" if kwargs["block"] == "adder" else "PASS"
+        return {"block": kwargs["block"], "status": status, "run_id": kwargs["block"]}
+
+    results = run_blocks(
+        ["adder", "fifo"],
+        "quick",
+        jobs=1,
+        fail_fast=True,
+        runner=runner,
+    )
+
+    assert seen == ["adder"]
+    assert [result["block"] for result in results] == ["adder"]
+
+
+def test_run_blocks_preserves_per_block_results():
+    def runner(**kwargs):
+        return {
+            "block": kwargs["block"],
+            "status": "PASS",
+            "run_id": f"{kwargs['block']}-run",
+            "stages": [],
+        }
+
+    results = run_blocks(["adder", "fifo", "counter"], "quick", jobs=1, runner=runner)
+
+    assert {result["run_id"] for result in results} == {
+        "adder-run",
+        "fifo-run",
+        "counter-run",
+    }
