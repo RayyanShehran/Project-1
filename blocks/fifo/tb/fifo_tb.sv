@@ -8,7 +8,7 @@ module fifo_tb #(
     localparam time CLK_PERIOD = 10ns;
 
     logic clk = 1'b0;
-    logic rst_n;
+    logic arst_n;
     logic wr_en;
     logic rd_en;
     logic [WIDTH-1:0] din;
@@ -25,7 +25,7 @@ module fifo_tb #(
         .DEPTH(DEPTH)
     ) dut (
         .clk   (clk),
-        .rst_n (rst_n),
+        .arst_n(arst_n),
         .wr_en (wr_en),
         .rd_en (rd_en),
         .din   (din),
@@ -99,7 +99,7 @@ module fifo_tb #(
         $dumpfile("work/fifo/icarus/waveform.vcd");
         $dumpvars(0, fifo_tb);
 
-        rst_n = 1'b0;
+        arst_n = 1'b0;
         wr_en = 1'b0;
         rd_en = 1'b0;
         din = '0;
@@ -108,7 +108,7 @@ module fifo_tb #(
         tick();
         tick();
 
-        rst_n = 1'b1;
+        arst_n = 1'b1;
         tick();
         check_flags("after reset");
 

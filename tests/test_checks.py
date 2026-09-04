@@ -70,10 +70,12 @@ endmodule
 
 
 def test_checks_stage_runs_enabled_rules(tmp_path):
-    rtl = tmp_path / "demo.sv"
+    rtl_dir = tmp_path / "rtl"
+    rtl_dir.mkdir()
+    rtl = rtl_dir / "demo.sv"
     rtl.write_text("module demo(input logic rst_n); always @(posedge clk) begin end endmodule\n")
     file_list = tmp_path / "files.f"
-    file_list.write_text("demo.sv\n")
+    file_list.write_text("rtl/demo.sv\n")
     cfg = {
         "sources": str(file_list),
         "checks": {
@@ -93,3 +95,21 @@ def test_checks_stage_runs_enabled_rules(tmp_path):
         "reset-port-naming",
         "no-bare-always",
     }
+
+
+def test_checks_stage_skips_testbench_files_by_default(tmp_path):
+    tb_dir = tmp_path / "tb"
+    tb_dir.mkdir()
+    tb = tb_dir / "demo_tb.sv"
+    tb.write_text("module demo_tb; always #5 clk = ~clk; endmodule\n")
+    file_list = tmp_path / "files.f"
+    file_list.write_text("tb/demo_tb.sv\n")
+    cfg = {"sources": str(file_list), "checks": {}}
+
+    result = ChecksStage().run(
+        cfg,
+        RunContext(run_id="checks", workdir=tmp_path / "work"),
+        root=tmp_path,
+    )
+
+    assert result.status is Status.PASS

@@ -6,7 +6,7 @@ module counter_tb;
     localparam time CLK_PERIOD = 10ns;
 
     logic             clk = 1'b0;
-    logic             rst_n;
+    logic             arst_n;
     logic             enable;
     logic [WIDTH-1:0] count;
 
@@ -15,7 +15,7 @@ module counter_tb;
 
     counter #(.WIDTH(WIDTH)) dut (
         .clk    (clk),
-        .rst_n  (rst_n),
+        .arst_n (arst_n),
         .enable (enable),
         .count  (count)
     );
@@ -51,7 +51,7 @@ module counter_tb;
         $dumpvars(0, counter_tb);
 
         // --- Reset sequence ---
-        rst_n    = 1'b0;
+        arst_n   = 1'b0;
         enable   = 1'b0;
         expected = '0;
         tick();
@@ -59,7 +59,7 @@ module counter_tb;
        check("during reset");
 
         // --- Release reset, still disabled ---
-        rst_n = 1'b1;
+        arst_n = 1'b1;
         tick();
         check("reset released, enable low");
 
@@ -79,7 +79,7 @@ module counter_tb;
         end
 
         // --- Reset mid-count ---
-        rst_n = 1'b0;
+        arst_n = 1'b0;
         tick();
         expected = '0;
         check("reset while counting");

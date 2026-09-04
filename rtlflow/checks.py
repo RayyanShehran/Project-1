@@ -226,6 +226,13 @@ CHECKS = {
 }
 
 
+def should_check_file(file: Path, config: dict) -> bool:
+    scope = config.get("scope", "rtl")
+    if scope == "all":
+        return True
+    return "/rtl/" in file.as_posix()
+
+
 class ChecksStage:
     name = "checks"
 
@@ -239,6 +246,8 @@ class ChecksStage:
         findings = []
         check_config = cfg.get("checks", {})
         for file in read_file_list(root, cfg["sources"]):
+            if not should_check_file(file, check_config):
+                continue
             if dry_run:
                 continue
             text = file.read_text()

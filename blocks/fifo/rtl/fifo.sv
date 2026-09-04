@@ -5,7 +5,7 @@ module fifo #(
     parameter int DEPTH = 4
 ) (
     input  logic             clk,
-    input  logic             rst_n,
+    input  logic             arst_n,
     input  logic             wr_en,
     input  logic             rd_en,
     input  logic [WIDTH-1:0] din,
@@ -24,8 +24,8 @@ module fifo #(
     assign full  = (count == (ADDR_WIDTH + 1)'(DEPTH));
     assign empty = (count == '0);
 
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
+    always_ff @(posedge clk or negedge arst_n) begin
+        if (!arst_n) begin
             wr_ptr <= '0;
             rd_ptr <= '0;
             count  <= '0;
