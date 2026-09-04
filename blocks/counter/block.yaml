@@ -1,0 +1,6 @@
+name: counter
+top: counter_tb
+sources: files.f
+parameters:
+  WIDTH: 4
+timeout_sec: 60

@@ -188,6 +188,40 @@ def block_config_path(block):
     return ROOT / "blocks" / block / "block.yaml"
 
 
+def discover_blocks(root=ROOT):
+    blocks_dir = root / "blocks"
+    if not blocks_dir.exists():
+        return []
+    return sorted(
+        path.name
+        for path in blocks_dir.iterdir()
+        if path.is_dir() and (path / "block.yaml").exists()
+    )
+
+
+def parse_block_list(blocks_text):
+    return [
+        item.strip()
+        for item in (blocks_text or "").split(",")
+        if item.strip()
+    ]
+
+
+def select_run_blocks(args, root=ROOT):
+    if args.all and args.blocks:
+        print("ERROR: use either --all or --blocks, not both")
+        raise SystemExit(2)
+    if args.all:
+        blocks = discover_blocks(root)
+        if not blocks:
+            print("ERROR: no blocks found")
+            raise SystemExit(1)
+        return blocks
+    if args.blocks:
+        return parse_block_list(args.blocks)
+    return [args.block]
+
+
 def normalize_flow(flow_config):
     if isinstance(flow_config, list):
         return {"policy": DEFAULT_FLOW_POLICY, "stages": flow_config}
@@ -317,6 +351,50 @@ def run_flow(
         "status": overall,
         "results": results,
     }
+
+
+def run_block_with_results(
+    block,
+    flow,
+    *,
+    only=None,
+    skip=None,
+    continue_on_error=False,
+    dry_run=False,
+    report="",
+):
+    flow_result = run_flow(
+        block,
+        flow,
+        only=only,
+        skip=skip,
+        continue_on_error=continue_on_error,
+        dry_run=dry_run,
+    )
+    project_config = load_project_config()
+    manifest = capture_manifest(
+        ROOT,
+        [ROOT / "rtlflow.yaml", block_config_path(block)],
+    )
+    results_doc = build_results_document(
+        flow_result,
+        manifest,
+        project_config.get("gates", {}),
+    )
+    results_path = write_results_json(results_doc, flow_result["workdir"])
+    print(f"Wrote {results_path}")
+    for report_format in [item.strip() for item in report.split(",") if item.strip()]:
+        report_path = write_report(results_doc, flow_result["workdir"], report_format)
+        print(f"Wrote {report_path}")
+    for failure in results_doc["gate_failures"]:
+        print(f"gate failure: {failure}")
+
+    total_findings = sum(len(stage.findings) for stage in flow_result["results"])
+    print(
+        f"{results_doc['status']} - {total_findings} findings "
+        f"across {len(flow_result['results'])} stages"
+    )
+    return results_doc
 
 
 def finding_from_error(stage_name, cfg, error):
@@ -521,10 +599,13 @@ def main():
 
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--block", default="adder")
+    run_parser.add_argument("--all", action="store_true")
+    run_parser.add_argument("--blocks")
     run_parser.add_argument("--flow", default="quick")
     run_parser.add_argument("--only", action="append", default=[])
     run_parser.add_argument("--skip", action="append", default=[])
     run_parser.add_argument("--continue-on-error", action="store_true")
+    run_parser.add_argument("--fail-fast", action="store_true")
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--report", default="")
 
@@ -661,38 +742,30 @@ def main():
             raise SystemExit(1)
 
     if args.command == "run":
-        flow_result = run_flow(
-            args.block,
-            args.flow,
-            only=args.only,
-            skip=args.skip,
-            continue_on_error=args.continue_on_error,
-            dry_run=args.dry_run,
-        )
-        project_config = load_project_config()
-        manifest = capture_manifest(
-            ROOT,
-            [ROOT / "rtlflow.yaml", block_config_path(args.block)],
-        )
-        results_doc = build_results_document(
-            flow_result,
-            manifest,
-            project_config.get("gates", {}),
-        )
-        results_path = write_results_json(results_doc, flow_result["workdir"])
-        print(f"Wrote {results_path}")
-        for report_format in [item.strip() for item in args.report.split(",") if item.strip()]:
-            report_path = write_report(results_doc, flow_result["workdir"], report_format)
-            print(f"Wrote {report_path}")
-        for failure in results_doc["gate_failures"]:
-            print(f"gate failure: {failure}")
+        blocks = select_run_blocks(args)
+        results_docs = []
+        for block in blocks:
+            if len(blocks) > 1:
+                print(f"== {block} ==")
+            results_doc = run_block_with_results(
+                block,
+                args.flow,
+                only=args.only,
+                skip=args.skip,
+                continue_on_error=args.continue_on_error,
+                dry_run=args.dry_run,
+                report=args.report,
+            )
+            results_docs.append(results_doc)
+            if args.fail_fast and results_doc["status"] != Status.PASS.value:
+                break
 
-        total_findings = sum(len(stage.findings) for stage in flow_result["results"])
+        failed = [doc for doc in results_docs if doc["status"] != Status.PASS.value]
         print(
-            f"{results_doc['status']} - {total_findings} findings "
-            f"across {len(flow_result['results'])} stages"
+            f"{len(results_docs)} blocks - "
+            f"{len(results_docs) - len(failed)} passed, {len(failed)} failed"
         )
-        if results_doc["status"] != Status.PASS.value:
+        if failed:
             raise SystemExit(1)
 
     if args.command == "report":

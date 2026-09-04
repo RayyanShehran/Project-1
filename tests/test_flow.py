@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from rtlflow.cli import run_flow
+from argparse import Namespace
+
+import pytest
+
+from rtlflow.cli import discover_blocks, parse_block_list, run_flow, select_run_blocks
 from rtlflow.models import Finding, Severity, StageResult, Status
 
 
@@ -122,3 +126,33 @@ def test_run_flow_only_and_skip_filter_stages():
     )
 
     assert [stage.stage for stage in result["results"]] == ["lint_verilator"]
+
+
+def test_discover_blocks_finds_configured_block_directories(tmp_path):
+    (tmp_path / "blocks" / "adder").mkdir(parents=True)
+    (tmp_path / "blocks" / "adder" / "block.yaml").write_text("name: adder\n")
+    (tmp_path / "blocks" / "scratch").mkdir()
+
+    assert discover_blocks(tmp_path) == ["adder"]
+
+
+def test_parse_block_list_trims_comma_separated_names():
+    assert parse_block_list("adder, fifo,, counter ") == ["adder", "fifo", "counter"]
+
+
+def test_select_run_blocks_prefers_all_or_blocks(tmp_path):
+    (tmp_path / "blocks" / "fifo").mkdir(parents=True)
+    (tmp_path / "blocks" / "fifo" / "block.yaml").write_text("name: fifo\n")
+
+    all_args = Namespace(all=True, blocks=None, block="adder")
+    explicit_args = Namespace(all=False, blocks="adder,counter", block="fifo")
+
+    assert select_run_blocks(all_args, tmp_path) == ["fifo"]
+    assert select_run_blocks(explicit_args, tmp_path) == ["adder", "counter"]
+
+
+def test_select_run_blocks_rejects_all_with_blocks():
+    args = Namespace(all=True, blocks="adder", block="fifo")
+
+    with pytest.raises(SystemExit):
+        select_run_blocks(args)
