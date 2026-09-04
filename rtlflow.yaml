@@ -18,3 +18,8 @@ flows:
     stages:
       - lint_verilator
       - lint_verible
+
+gates:
+  max_errors: 0
+  max_warnings: 10
+  fail_on_expired_waivers: true

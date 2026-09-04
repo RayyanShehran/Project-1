@@ -11,6 +11,13 @@ import yaml
 
 from rtlflow.lint import VeribleLintStage, VerilatorLintStage
 from rtlflow.models import Finding, RunContext, Severity, StageResult, Status
+from rtlflow.results import (
+    build_results_document,
+    capture_manifest,
+    load_results_json,
+    write_report,
+    write_results_json,
+)
 from rtlflow.waivers import apply_waivers, load_waivers
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -173,6 +180,10 @@ def load_project_config():
         return {"flows": {}}
     with config_path.open() as f:
         return yaml.safe_load(f) or {"flows": {}}
+
+
+def block_config_path(block):
+    return ROOT / "blocks" / block / "block.yaml"
 
 
 def normalize_flow(flow_config):
@@ -507,8 +518,13 @@ def main():
     run_parser.add_argument("--skip", action="append", default=[])
     run_parser.add_argument("--continue-on-error", action="store_true")
     run_parser.add_argument("--dry-run", action="store_true")
+    run_parser.add_argument("--report", default="")
 
     subparsers.add_parser("list-flows")
+
+    report_parser = subparsers.add_parser("report")
+    report_parser.add_argument("results_json")
+    report_parser.add_argument("--format", default="html")
 
     waivers_parser = subparsers.add_parser("waivers")
     waivers_parser.add_argument("--block", default="adder")
@@ -608,7 +624,7 @@ def main():
             raise SystemExit(1)
 
     if args.command == "run":
-        result = run_flow(
+        flow_result = run_flow(
             args.block,
             args.flow,
             only=args.only,
@@ -616,13 +632,38 @@ def main():
             continue_on_error=args.continue_on_error,
             dry_run=args.dry_run,
         )
-        total_findings = sum(len(stage.findings) for stage in result["results"])
-        print(
-            f"{result['status'].value} - {total_findings} findings "
-            f"across {len(result['results'])} stages"
+        project_config = load_project_config()
+        manifest = capture_manifest(
+            ROOT,
+            [ROOT / "rtlflow.yaml", block_config_path(args.block)],
         )
-        if result["status"] is not Status.PASS:
+        results_doc = build_results_document(
+            flow_result,
+            manifest,
+            project_config.get("gates", {}),
+        )
+        results_path = write_results_json(results_doc, flow_result["workdir"])
+        print(f"Wrote {results_path}")
+        for report_format in [item.strip() for item in args.report.split(",") if item.strip()]:
+            report_path = write_report(results_doc, flow_result["workdir"], report_format)
+            print(f"Wrote {report_path}")
+        for failure in results_doc["gate_failures"]:
+            print(f"gate failure: {failure}")
+
+        total_findings = sum(len(stage.findings) for stage in flow_result["results"])
+        print(
+            f"{results_doc['status']} - {total_findings} findings "
+            f"across {len(flow_result['results'])} stages"
+        )
+        if results_doc["status"] != Status.PASS.value:
             raise SystemExit(1)
+
+    if args.command == "report":
+        data = load_results_json(Path(args.results_json))
+        workdir = Path(args.results_json).resolve().parent
+        for report_format in [item.strip() for item in args.format.split(",") if item.strip()]:
+            report_path = write_report(data, workdir, report_format)
+            print(f"Wrote {report_path}")
 
 
 IcarusSimulator = IcarusSimulationStage
