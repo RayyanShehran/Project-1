@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import yaml
 
+from rtlflow.adopt import infer_adoption, write_adopted_config
 from rtlflow.cache import (
     clear_cache,
     compute_input_hash,
@@ -143,8 +144,8 @@ def parameter_args_for_verilator(parameters):
 
 
 # Read block settings from blocks/<block>/block.yaml.
-def load_block_config(block_name):
-    config_path = ROOT / "blocks" / block_name / "block.yaml"
+def load_block_config(block_name, config_path=None):
+    config_path = Path(config_path) if config_path else ROOT / "blocks" / block_name / "block.yaml"
 
     if not config_path.exists():
         print(f"ERROR: missing config file: {config_path}")
@@ -160,7 +161,7 @@ def load_block_config(block_name):
             print(f"ERROR: {config_path} missing required field: {field}")
             raise SystemExit(1)
 
-    block_dir = ROOT / "blocks" / cfg["name"]
+    block_dir = config_path.parent if config_path else ROOT / "blocks" / cfg["name"]
     sources = block_dir / cfg["sources"]
 
     if not sources.exists():
@@ -196,8 +197,8 @@ def load_project_config():
         return yaml.safe_load(f) or {"flows": {}}
 
 
-def block_config_path(block):
-    return ROOT / "blocks" / block / "block.yaml"
+def block_config_path(block, config_path=None):
+    return Path(config_path) if config_path else ROOT / "blocks" / block / "block.yaml"
 
 
 def discover_blocks(root=ROOT):
@@ -220,6 +221,14 @@ def parse_block_list(blocks_text):
 
 
 def select_run_blocks(args, root=ROOT):
+    config_path = getattr(args, "config", None)
+    if config_path:
+        if args.all or args.blocks:
+            print("ERROR: --config cannot be combined with --all or --blocks")
+            raise SystemExit(2)
+        with Path(config_path).open() as f:
+            cfg = yaml.safe_load(f)
+        return [cfg["name"]]
     if args.all and args.blocks:
         print("ERROR: use either --all or --blocks, not both")
         raise SystemExit(2)
@@ -294,8 +303,9 @@ def run_flow(
     dry_run=False,
     stage_registry=None,
     project_config=None,
+    config_path=None,
 ):
-    cfg = load_block_config(block)
+    cfg = load_block_config(block, config_path)
     project_config = project_config or load_project_config()
     flows = project_config.get("flows", {})
     if flow not in flows:
@@ -375,12 +385,13 @@ def run_block_with_results(
     dry_run=False,
     report="",
     no_cache=False,
+    config_path=None,
 ):
-    cfg = load_block_config(block)
+    cfg = load_block_config(block, config_path)
     project_config = load_project_config()
     manifest = capture_manifest(
         ROOT,
-        [ROOT / "rtlflow.yaml", block_config_path(block)],
+        [ROOT / "rtlflow.yaml", block_config_path(block, config_path)],
     )
     input_hash = compute_input_hash(
         ROOT,
@@ -412,6 +423,7 @@ def run_block_with_results(
         skip=skip,
         continue_on_error=continue_on_error,
         dry_run=dry_run,
+        config_path=config_path,
     )
     results_doc = build_results_document(
         flow_result,
@@ -456,6 +468,7 @@ def run_blocks(
     fail_fast=False,
     jobs=None,
     no_cache=False,
+    config_path=None,
     runner=run_block_with_results,
 ):
     jobs = jobs or os.cpu_count() or 1
@@ -470,6 +483,7 @@ def run_blocks(
             "dry_run": dry_run,
             "report": report,
             "no_cache": no_cache,
+            "config_path": config_path,
         }
         for block in blocks
     ]
@@ -707,6 +721,7 @@ def main():
     run_parser.add_argument("--block", default="adder")
     run_parser.add_argument("--all", action="store_true")
     run_parser.add_argument("--blocks")
+    run_parser.add_argument("--config")
     run_parser.add_argument("--flow", default="quick")
     run_parser.add_argument("--only", action="append", default=[])
     run_parser.add_argument("--skip", action="append", default=[])
@@ -725,6 +740,12 @@ def main():
     baseline_parser.add_argument("--all", action="store_true")
     baseline_parser.add_argument("--blocks")
     baseline_parser.add_argument("--block", default="adder")
+
+    adopt_parser = subparsers.add_parser("adopt")
+    adopt_parser.add_argument("path")
+    adopt_parser.add_argument("--run", action="store_true")
+    adopt_parser.add_argument("--flow", default="lint_only")
+    adopt_parser.add_argument("--write-config")
 
     cache_parser = subparsers.add_parser("cache")
     cache_parser.add_argument("action", choices=["clear"])
@@ -872,6 +893,7 @@ def main():
             fail_fast=args.fail_fast,
             jobs=args.jobs,
             no_cache=args.no_cache,
+            config_path=args.config,
         )
 
         failed = [doc for doc in results_docs if doc["status"] != Status.PASS.value]
@@ -903,6 +925,42 @@ def main():
         blocks = select_run_blocks(args)
         path = save_baseline(ROOT, blocks)
         print(f"Wrote {path}")
+
+    if args.command == "adopt":
+        source_path = Path(args.path).resolve()
+        adopted = infer_adoption(source_path)
+        print(f"Found {len(adopted.sources)} source files")
+        if adopted.top_candidates:
+            print(f"Top candidates: {', '.join(adopted.top_candidates)}")
+        if adopted.ambiguous:
+            print("ERROR: ambiguous top module; rerun after narrowing the input files")
+            raise SystemExit(1)
+        print(f"Inferred top module: {adopted.top}")
+        if adopted.testbench:
+            print(f"Inferred testbench: {adopted.testbench}")
+        else:
+            print("No testbench found; simulation stages may be skipped")
+        if adopted.include_dirs:
+            print(
+                "Include directories: "
+                + ", ".join(str(path) for path in adopted.include_dirs)
+            )
+        output_path = (
+            Path(args.write_config)
+            if args.write_config
+            else ROOT / ".rtlflow" / "adopted" / adopted.name / "block.yaml"
+        )
+        write_adopted_config(adopted, output_path, source_path)
+        print(f"Wrote: {output_path}")
+        if args.run:
+            result = run_block_with_results(
+                adopted.name,
+                args.flow,
+                config_path=output_path,
+                no_cache=True,
+            )
+            if result["status"] != Status.PASS.value:
+                raise SystemExit(1)
 
     if args.command == "cache":
         if args.action == "clear":
