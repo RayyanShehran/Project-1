@@ -2,8 +2,10 @@ import argparse
 import shutil
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 import yaml
 
@@ -12,6 +14,7 @@ from rtlflow.models import Finding, RunContext, Severity, StageResult, Status
 from rtlflow.waivers import apply_waivers, load_waivers
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_FLOW_POLICY = "gated"
 
 class RtlFlowError(Exception):
     pass
@@ -161,6 +164,145 @@ def load_block_config(block_name):
         "base_work_dir": work_dir,
         "verilator_obj_dir": Path(f"/tmp/rtlflow_{cfg['name']}_obj"),
         "waivers": waivers,
+    }
+
+
+def load_project_config():
+    config_path = ROOT / "rtlflow.yaml"
+    if not config_path.exists():
+        return {"flows": {}}
+    with config_path.open() as f:
+        return yaml.safe_load(f) or {"flows": {}}
+
+
+def normalize_flow(flow_config):
+    if isinstance(flow_config, list):
+        return {"policy": DEFAULT_FLOW_POLICY, "stages": flow_config}
+    return {
+        "policy": flow_config.get("policy", DEFAULT_FLOW_POLICY),
+        "stages": flow_config.get("stages", []),
+    }
+
+
+def make_run_id():
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"{timestamp}-{uuid4().hex[:6]}"
+
+
+def format_stage_line(result):
+    return (
+        f"{result.stage:<16} {result.status.value:<7} "
+        f"{result.duration_sec:>5.1f}s {len(result.findings):>3} findings"
+    )
+
+
+def skipped_stage_result(stage_name, cfg, reason):
+    return StageResult(
+        stage=stage_name,
+        status=Status.SKIPPED,
+        findings=[
+            Finding(
+                severity=Severity.INFO,
+                rule_id="SKIPPED",
+                message=reason,
+                file=Path(cfg["sources"]),
+                line=None,
+                column=None,
+                tool=stage_name,
+            )
+        ],
+        artifacts={},
+        duration_sec=0.0,
+    )
+
+
+def should_gate_simulation(results):
+    for result in results:
+        if not result.stage.startswith("lint_"):
+            continue
+        if any(finding.severity is Severity.ERROR for finding in result.findings):
+            return True
+    return False
+
+
+def run_flow(
+    block,
+    flow,
+    *,
+    only=None,
+    skip=None,
+    continue_on_error=False,
+    dry_run=False,
+    stage_registry=None,
+    project_config=None,
+):
+    cfg = load_block_config(block)
+    project_config = project_config or load_project_config()
+    flows = project_config.get("flows", {})
+    if flow not in flows:
+        print(f"ERROR: unknown flow: {flow}")
+        raise SystemExit(1)
+
+    flow_config = normalize_flow(flows[flow])
+    policy = "run_all" if continue_on_error else flow_config["policy"]
+    stage_names = list(flow_config["stages"])
+    if only:
+        selected = set(only)
+        stage_names = [name for name in stage_names if name in selected]
+    if skip:
+        skipped = set(skip)
+        stage_names = [name for name in stage_names if name not in skipped]
+
+    registry = stage_registry or STAGES
+    run_id = make_run_id()
+    run_workdir = cfg["base_work_dir"] / run_id
+    results = []
+
+    for stage_name in stage_names:
+        if stage_name not in registry:
+            result = skipped_stage_result(stage_name, cfg, "stage is not registered")
+            results.append(result)
+            print(format_stage_line(result))
+            continue
+
+        if (
+            policy == "gated"
+            and stage_name.startswith("sim_")
+            and should_gate_simulation(results)
+        ):
+            result = skipped_stage_result(stage_name, cfg, "skipped by gated flow policy")
+            results.append(result)
+            print(format_stage_line(result))
+            continue
+
+        stage = registry[stage_name]
+        ctx = RunContext(run_id=run_id, workdir=run_workdir / stage_name)
+        if stage_name.startswith("lint_"):
+            result = stage.run(cfg, ctx, dry_run, ROOT)
+            remaining_findings, audit = apply_waivers(result.findings, cfg["waivers"])
+            result.findings = remaining_findings
+            if audit.expired:
+                result.status = Status.FAIL
+            elif result.status is Status.FAIL and not result.findings:
+                result.status = Status.PASS
+        else:
+            result = stage.run(cfg, ctx, dry_run)
+
+        results.append(result)
+        print(format_stage_line(result))
+
+        if policy == "fail_fast" and result.status in {Status.FAIL, Status.ERROR}:
+            break
+
+    failed = [result for result in results if result.status in {Status.FAIL, Status.ERROR}]
+    overall = Status.FAIL if failed else Status.PASS
+    return {
+        "block": block,
+        "flow": flow,
+        "run_id": run_id,
+        "workdir": run_workdir,
+        "status": overall,
+        "results": results,
     }
 
 
@@ -358,6 +500,16 @@ def main():
     lint_parser.add_argument("--tool", choices=LINTERS.keys(), default="verilator")
     lint_parser.add_argument("--dry-run", action="store_true")
 
+    run_parser = subparsers.add_parser("run")
+    run_parser.add_argument("--block", default="adder")
+    run_parser.add_argument("--flow", default="quick")
+    run_parser.add_argument("--only", action="append", default=[])
+    run_parser.add_argument("--skip", action="append", default=[])
+    run_parser.add_argument("--continue-on-error", action="store_true")
+    run_parser.add_argument("--dry-run", action="store_true")
+
+    subparsers.add_parser("list-flows")
+
     waivers_parser = subparsers.add_parser("waivers")
     waivers_parser.add_argument("--block", default="adder")
     waivers_parser.add_argument("--audit", action="store_true")
@@ -370,6 +522,13 @@ def main():
         for name, sim in SIMULATORS.items():
             status = "available" if sim.available() else "missing"
             print(f"{name}: {status}")
+        return
+
+    if args.command == "list-flows":
+        for name, flow_config in load_project_config().get("flows", {}).items():
+            flow_config = normalize_flow(flow_config)
+            stages = ", ".join(flow_config["stages"])
+            print(f"{name}: {stages} ({flow_config['policy']})")
         return
 
     if args.command == "sim":
@@ -446,6 +605,23 @@ def main():
             f"{len(audit.expired)} expired, {len(audit.stale)} stale"
         )
         if audit.expired or audit.stale:
+            raise SystemExit(1)
+
+    if args.command == "run":
+        result = run_flow(
+            args.block,
+            args.flow,
+            only=args.only,
+            skip=args.skip,
+            continue_on_error=args.continue_on_error,
+            dry_run=args.dry_run,
+        )
+        total_findings = sum(len(stage.findings) for stage in result["results"])
+        print(
+            f"{result['status'].value} - {total_findings} findings "
+            f"across {len(result['results'])} stages"
+        )
+        if result["status"] is not Status.PASS:
             raise SystemExit(1)
 
 

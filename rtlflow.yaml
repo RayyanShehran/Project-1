@@ -1,0 +1,20 @@
+flows:
+  quick:
+    policy: gated
+    stages:
+      - lint_verilator
+      - sim_icarus
+
+  full:
+    policy: gated
+    stages:
+      - lint_verilator
+      - lint_verible
+      - sim_icarus
+      - sim_verilator
+
+  lint_only:
+    policy: run_all
+    stages:
+      - lint_verilator
+      - lint_verible
