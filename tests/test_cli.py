@@ -13,6 +13,10 @@ from rtlflow.cli import (
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
 
+def normalize_path_text(text):
+    return text.replace("\\", "/")
+
+
 def make_cfg(block, sim_name):
     cfg = load_block_config(block)
     cfg["work_dir"] = cfg["base_work_dir"] / sim_name
@@ -55,7 +59,7 @@ def test_load_adder_config():
     assert cfg["top"] == "adder_tb"
     assert cfg["timeout_sec"] == 60
     assert cfg["parameters"] == {"WIDTH": 8}
-    assert cfg["sources"].endswith("blocks/adder/files.f")
+    assert normalize_path_text(cfg["sources"]).endswith("blocks/adder/files.f")
 
 
 def test_load_fifo_config():
@@ -65,7 +69,7 @@ def test_load_fifo_config():
     assert cfg["top"] == "fifo_tb"
     assert cfg["timeout_sec"] == 60
     assert cfg["parameters"] == {"WIDTH": 8, "DEPTH": 4}
-    assert cfg["sources"].endswith("blocks/fifo/files.f")
+    assert normalize_path_text(cfg["sources"]).endswith("blocks/fifo/files.f")
 
 
 def test_icarus_dry_run_prints_expected_commands(capsys):
@@ -75,7 +79,7 @@ def test_icarus_dry_run_prints_expected_commands(capsys):
     sim.build(cfg, dry_run=True)
     sim.run(cfg, dry_run=True)
 
-    output = capsys.readouterr().out
+    output = normalize_path_text(capsys.readouterr().out)
 
     assert "iverilog" in output
     assert "-g2012" in output
@@ -91,7 +95,7 @@ def test_verilator_dry_run_prints_expected_commands(capsys):
     sim.build(cfg, dry_run=True)
     sim.run(cfg, dry_run=True)
 
-    output = capsys.readouterr().out
+    output = normalize_path_text(capsys.readouterr().out)
 
     assert "verilator" in output
     assert "--binary" in output
@@ -109,7 +113,7 @@ def test_icarus_fifo_dry_run_prints_expected_commands(capsys):
     sim.build(cfg, dry_run=True)
     sim.run(cfg, dry_run=True)
 
-    output = capsys.readouterr().out
+    output = normalize_path_text(capsys.readouterr().out)
 
     assert "iverilog" in output
     assert "blocks/fifo/files.f" in output
@@ -125,7 +129,7 @@ def test_verilator_fifo_dry_run_prints_expected_commands(capsys):
     sim.build(cfg, dry_run=True)
     sim.run(cfg, dry_run=True)
 
-    output = capsys.readouterr().out
+    output = normalize_path_text(capsys.readouterr().out)
 
     assert "verilator" in output
     assert "blocks/fifo/files.f" in output
