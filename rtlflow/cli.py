@@ -1,10 +1,13 @@
 import argparse
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Protocol
 
 import yaml
+
+from rtlflow.models import Finding, RunContext, Severity, StageResult, Status
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,17 +31,14 @@ class Timeout(RtlFlowError):
     pass
 
 
-# Shared shape every simulator must follow.
-class Simulator(Protocol):
+# Shared shape every stage in the flow must follow.
+class Stage(Protocol):
     name: str
 
     def available(self) -> bool:
         ...
 
-    def build(self, cfg, dry_run=False) -> None:
-        ...
-
-    def run(self, cfg, dry_run=False) -> None:
+    def run(self, cfg, ctx: RunContext, dry_run=False) -> StageResult:
         ...
 
 
@@ -62,6 +62,15 @@ def run_cmd(cmd, cfg=None, dry_run=False, timeout_sec=None, phase="run"):
             text=True,
             capture_output=True,
         )
+    except FileNotFoundError as e:
+        message = f"ERROR: tool not found: {cmd[0]}"
+        print(message)
+
+        if cfg is not None:
+            with cfg["log_file"].open("a") as f:
+                f.write(message + "\n")
+
+        raise ToolNotFound(message) from e
     except subprocess.TimeoutExpired:
         message = f"ERROR: command timed out after {timeout_sec} seconds"
         print(message)
@@ -146,9 +155,93 @@ def load_block_config(block_name):
     }
 
 
-# Icarus flow: compile with iverilog, then run with vvp.
-class IcarusSimulator:
-    name = "icarus"
+def finding_from_error(stage_name, cfg, error):
+    return Finding(
+        severity=Severity.ERROR,
+        rule_id=type(error).__name__,
+        message=str(error),
+        file=Path(cfg["sources"]),
+        line=None,
+        column=None,
+        tool=stage_name,
+    )
+
+
+class SimulationStage:
+    simulator_name: str
+    name: str
+
+    def build(self, cfg, dry_run=False):
+        raise NotImplementedError
+
+    def execute(self, cfg, dry_run=False):
+        raise NotImplementedError
+
+    def prepare_config(self, cfg, ctx):
+        cfg = dict(cfg)
+        cfg["work_dir"] = ctx.workdir
+        cfg["work_dir"].mkdir(parents=True, exist_ok=True)
+        cfg["vvp_file"] = cfg["work_dir"] / "sim.vvp"
+        cfg["waveform"] = cfg["work_dir"] / "waveform.vcd"
+        cfg["log_file"] = cfg["work_dir"] / "run.log"
+        return cfg
+
+    def run(self, cfg, ctx: RunContext, dry_run=False) -> StageResult:
+        started = time.perf_counter()
+        cfg = self.prepare_config(cfg, ctx)
+        artifacts = {"log": cfg["log_file"], "waveform": cfg["waveform"]}
+
+        if not dry_run and not self.available():
+            finding = Finding(
+                severity=Severity.INFO,
+                rule_id="TOOL_MISSING",
+                message=f"simulator not available: {self.simulator_name}",
+                file=Path(cfg["sources"]),
+                line=None,
+                column=None,
+                tool=self.name,
+            )
+            return StageResult(
+                stage=self.name,
+                status=Status.SKIPPED,
+                findings=[finding],
+                artifacts=artifacts,
+                duration_sec=time.perf_counter() - started,
+            )
+
+        try:
+            self.build(cfg, dry_run)
+            self.execute(cfg, dry_run)
+        except (CompileError, SimulationFailed) as e:
+            return StageResult(
+                stage=self.name,
+                status=Status.FAIL,
+                findings=[finding_from_error(self.name, cfg, e)],
+                artifacts=artifacts,
+                duration_sec=time.perf_counter() - started,
+            )
+        except RtlFlowError as e:
+            return StageResult(
+                stage=self.name,
+                status=Status.ERROR,
+                findings=[finding_from_error(self.name, cfg, e)],
+                artifacts=artifacts,
+                duration_sec=time.perf_counter() - started,
+            )
+
+        return StageResult(
+            stage=self.name,
+            status=Status.PASS,
+            findings=[],
+            artifacts=artifacts,
+            duration_sec=time.perf_counter() - started,
+        )
+
+
+# Icarus stage: compile with iverilog, then run with vvp.
+class IcarusSimulationStage(SimulationStage):
+    name = "sim_icarus"
+    simulator_name = "icarus"
 
     def available(self):
         return shutil.which("iverilog") is not None and shutil.which("vvp") is not None
@@ -165,16 +258,17 @@ class IcarusSimulator:
         cmd.extend(parameter_args_for_icarus(cfg["parameters"]))
         run_cmd(cmd, cfg, dry_run, cfg["timeout_sec"], phase="build")
 
-    def run(self, cfg, dry_run=False):
+    def execute(self, cfg, dry_run=False):
         run_cmd([
             "vvp",
             str(cfg["vvp_file"]),
         ], cfg, dry_run, cfg["timeout_sec"], phase="run")
 
 
-# Verilator flow: build a native executable, then run it.
-class VerilatorSimulator:
-    name = "verilator"
+# Verilator stage: build a native executable, then run it.
+class VerilatorSimulationStage(SimulationStage):
+    name = "sim_verilator"
+    simulator_name = "verilator"
 
     def available(self):
         return shutil.which("verilator") is not None
@@ -196,7 +290,7 @@ class VerilatorSimulator:
 
         run_cmd(cmd, cfg, dry_run, cfg["timeout_sec"], phase="build")
 
-    def run(self, cfg, dry_run=False):
+    def execute(self, cfg, dry_run=False):
         run_cmd([
             str(cfg["verilator_obj_dir"] / f"V{cfg['top']}"),
         ], cfg, dry_run, cfg["timeout_sec"], phase="run")
@@ -204,8 +298,13 @@ class VerilatorSimulator:
 
 # Simple registry for the simulators this tool supports.
 SIMULATORS = {
-    "icarus": IcarusSimulator(),
-    "verilator": VerilatorSimulator(),
+    "icarus": IcarusSimulationStage(),
+    "verilator": VerilatorSimulationStage(),
+}
+
+STAGES = {
+    stage.name: stage
+    for stage in SIMULATORS.values()
 }
 
 
@@ -252,29 +351,26 @@ def main():
 
     if args.command == "sim":
         cfg = load_block_config(args.block)
-        cfg["work_dir"] = cfg["base_work_dir"] / args.sim
-        cfg["work_dir"].mkdir(parents=True, exist_ok=True)
-        cfg["vvp_file"] = cfg["work_dir"] / "sim.vvp"
-        cfg["waveform"] = cfg["work_dir"] / "waveform.vcd"
-        
-        cfg["log_file"] = cfg["work_dir"] / "run.log"
         sim = SIMULATORS[args.sim]
+        ctx = RunContext(
+            run_id=args.sim,
+            workdir=cfg["base_work_dir"] / args.sim,
+        )
+        result = sim.run(cfg, ctx, args.dry_run)
 
-        if not sim.available():
-            print(f"ERROR: simulator not available: {sim.name}")
-            raise SystemExit(1)
-
-        try:
-            sim.build(cfg, args.dry_run)
-            sim.run(cfg, args.dry_run)
-        except RtlFlowError as e:
-            print(f"ERROR [{type(e).__name__}]: {e}")
+        if result.status is not Status.PASS:
+            for finding in result.findings:
+                print(f"{result.status.value} [{finding.rule_id}]: {finding.message}")
             raise SystemExit(1)
 
         if args.dry_run:
             print("Dry run only; no files written")
         else:
-            print(f"Wrote {cfg['waveform']}")
+            print(f"Wrote {result.artifacts['waveform']}")
+
+
+IcarusSimulator = IcarusSimulationStage
+VerilatorSimulator = VerilatorSimulationStage
 
 
 if __name__ == "__main__":

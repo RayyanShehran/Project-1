@@ -9,6 +9,7 @@ from rtlflow.cli import (
     classify_output,
     load_block_config,
 )
+from rtlflow.models import RunContext, Status
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
@@ -19,12 +20,11 @@ def normalize_path_text(text):
 
 def make_cfg(block, sim_name):
     cfg = load_block_config(block)
-    cfg["work_dir"] = cfg["base_work_dir"] / sim_name
-    cfg["work_dir"].mkdir(parents=True, exist_ok=True)
-    cfg["vvp_file"] = cfg["work_dir"] / "sim.vvp"
-    cfg["waveform"] = cfg["work_dir"] / "waveform.vcd"
-    cfg["log_file"] = cfg["work_dir"] / "run.log"
     return cfg
+
+
+def make_ctx(cfg, sim_name):
+    return RunContext(run_id=sim_name, workdir=cfg["base_work_dir"] / sim_name)
 
 
 def test_classify_icarus_success():
@@ -76,11 +76,11 @@ def test_icarus_dry_run_prints_expected_commands(capsys):
     cfg = make_cfg("adder", "icarus")
 
     sim = IcarusSimulator()
-    sim.build(cfg, dry_run=True)
-    sim.run(cfg, dry_run=True)
+    result = sim.run(cfg, make_ctx(cfg, "icarus"), dry_run=True)
 
     output = normalize_path_text(capsys.readouterr().out)
 
+    assert result.status is Status.PASS
     assert "iverilog" in output
     assert "-g2012" in output
     assert "blocks/adder/files.f" in output
@@ -92,11 +92,11 @@ def test_verilator_dry_run_prints_expected_commands(capsys):
     cfg = make_cfg("adder", "verilator")
 
     sim = VerilatorSimulator()
-    sim.build(cfg, dry_run=True)
-    sim.run(cfg, dry_run=True)
+    result = sim.run(cfg, make_ctx(cfg, "verilator"), dry_run=True)
 
     output = normalize_path_text(capsys.readouterr().out)
 
+    assert result.status is Status.PASS
     assert "verilator" in output
     assert "--binary" in output
     assert "--timing" in output
@@ -110,11 +110,11 @@ def test_icarus_fifo_dry_run_prints_expected_commands(capsys):
     cfg = make_cfg("fifo", "icarus")
 
     sim = IcarusSimulator()
-    sim.build(cfg, dry_run=True)
-    sim.run(cfg, dry_run=True)
+    result = sim.run(cfg, make_ctx(cfg, "icarus"), dry_run=True)
 
     output = normalize_path_text(capsys.readouterr().out)
 
+    assert result.status is Status.PASS
     assert "iverilog" in output
     assert "blocks/fifo/files.f" in output
     assert "-P WIDTH=8" in output
@@ -126,11 +126,11 @@ def test_verilator_fifo_dry_run_prints_expected_commands(capsys):
     cfg = make_cfg("fifo", "verilator")
 
     sim = VerilatorSimulator()
-    sim.build(cfg, dry_run=True)
-    sim.run(cfg, dry_run=True)
+    result = sim.run(cfg, make_ctx(cfg, "verilator"), dry_run=True)
 
     output = normalize_path_text(capsys.readouterr().out)
 
+    assert result.status is Status.PASS
     assert "verilator" in output
     assert "blocks/fifo/files.f" in output
     assert "--top-module fifo_tb" in output
@@ -147,8 +147,8 @@ def test_icarus_integration():
     if not sim.available():
         pytest.skip("Icarus is not installed")
 
-    sim.build(cfg)
-    sim.run(cfg)
+    result = sim.run(cfg, make_ctx(cfg, "icarus"))
+    assert result.status is Status.PASS
 
 
 @pytest.mark.integration
@@ -159,8 +159,8 @@ def test_verilator_integration():
     if not sim.available():
         pytest.skip("Verilator is not installed")
 
-    sim.build(cfg)
-    sim.run(cfg)
+    result = sim.run(cfg, make_ctx(cfg, "verilator"))
+    assert result.status is Status.PASS
 
 
 @pytest.mark.integration
@@ -171,8 +171,8 @@ def test_fifo_icarus_integration():
     if not sim.available():
         pytest.skip("Icarus is not installed")
 
-    sim.build(cfg)
-    sim.run(cfg)
+    result = sim.run(cfg, make_ctx(cfg, "icarus"))
+    assert result.status is Status.PASS
 
 
 @pytest.mark.integration
@@ -183,5 +183,5 @@ def test_fifo_verilator_integration():
     if not sim.available():
         pytest.skip("Verilator is not installed")
 
-    sim.build(cfg)
-    sim.run(cfg)
+    result = sim.run(cfg, make_ctx(cfg, "verilator"))
+    assert result.status is Status.PASS
