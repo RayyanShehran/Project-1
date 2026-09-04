@@ -20,6 +20,7 @@ from rtlflow.cache import (
     materialize_cached_results,
     save_cached_results,
 )
+from rtlflow.baseline import compare_to_baseline, load_baseline, save_baseline
 from rtlflow.checks import CHECKS, ChecksStage
 from rtlflow.lint import VeribleLintStage, VerilatorLintStage
 from rtlflow.models import Finding, RunContext, Severity, StageResult, Status
@@ -713,10 +714,17 @@ def main():
     run_parser.add_argument("--fail-fast", action="store_true")
     run_parser.add_argument("--jobs", type=int)
     run_parser.add_argument("--no-cache", action="store_true")
+    run_parser.add_argument("--compare-to")
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--report", default="")
 
     subparsers.add_parser("list-flows")
+
+    baseline_parser = subparsers.add_parser("baseline")
+    baseline_parser.add_argument("action", choices=["save"])
+    baseline_parser.add_argument("--all", action="store_true")
+    baseline_parser.add_argument("--blocks")
+    baseline_parser.add_argument("--block", default="adder")
 
     cache_parser = subparsers.add_parser("cache")
     cache_parser.add_argument("action", choices=["clear"])
@@ -867,12 +875,34 @@ def main():
         )
 
         failed = [doc for doc in results_docs if doc["status"] != Status.PASS.value]
+        if args.compare_to:
+            try:
+                baseline = load_baseline(ROOT, args.compare_to)
+            except (FileNotFoundError, ValueError) as e:
+                print(f"ERROR: {e}")
+                raise SystemExit(1) from e
+            for doc in results_docs:
+                comparison = compare_to_baseline(doc, baseline)
+                doc["comparison"] = comparison
+                print(
+                    f"{doc['block']} comparison: "
+                    f"{len(comparison['new'])} NEW, "
+                    f"{len(comparison['fixed'])} FIXED, "
+                    f"{len(comparison['unchanged'])} UNCHANGED"
+                )
+                for item in comparison["new"]:
+                    print(f"NEW {item}")
         print(
             f"{len(results_docs)} blocks - "
             f"{len(results_docs) - len(failed)} passed, {len(failed)} failed"
         )
         if failed:
             raise SystemExit(1)
+
+    if args.command == "baseline":
+        blocks = select_run_blocks(args)
+        path = save_baseline(ROOT, blocks)
+        print(f"Wrote {path}")
 
     if args.command == "cache":
         if args.action == "clear":
