@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import yaml
 
+from rtlflow.checks import CHECKS, ChecksStage
 from rtlflow.lint import VeribleLintStage, VerilatorLintStage
 from rtlflow.models import Finding, RunContext, Severity, StageResult, Status
 from rtlflow.results import (
@@ -171,6 +172,7 @@ def load_block_config(block_name):
         "base_work_dir": work_dir,
         "verilator_obj_dir": Path(f"/tmp/rtlflow_{cfg['name']}_obj"),
         "waivers": waivers,
+        "checks": load_project_config().get("checks", {}),
     }
 
 
@@ -229,7 +231,7 @@ def skipped_stage_result(stage_name, cfg, reason):
 
 def should_gate_simulation(results):
     for result in results:
-        if not result.stage.startswith("lint_"):
+        if result.stage.startswith("sim_"):
             continue
         if any(finding.severity is Severity.ERROR for finding in result.findings):
             return True
@@ -288,7 +290,7 @@ def run_flow(
 
         stage = registry[stage_name]
         ctx = RunContext(run_id=run_id, workdir=run_workdir / stage_name)
-        if stage_name.startswith("lint_"):
+        if stage_name.startswith("lint_") or stage_name == "checks":
             result = stage.run(cfg, ctx, dry_run, ROOT)
             remaining_findings, audit = apply_waivers(result.findings, cfg["waivers"])
             result.findings = remaining_findings
@@ -471,7 +473,7 @@ LINTERS = {
 
 STAGES = {
     stage.name: stage
-    for stage in [*SIMULATORS.values(), *LINTERS.values()]
+    for stage in [*SIMULATORS.values(), *LINTERS.values(), ChecksStage()]
 }
 
 
@@ -511,6 +513,12 @@ def main():
     lint_parser.add_argument("--tool", choices=LINTERS.keys(), default="verilator")
     lint_parser.add_argument("--dry-run", action="store_true")
 
+    check_parser = subparsers.add_parser("check")
+    check_parser.add_argument("--block", default="adder")
+    check_parser.add_argument("--dry-run", action="store_true")
+
+    subparsers.add_parser("list-checks")
+
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--block", default="adder")
     run_parser.add_argument("--flow", default="quick")
@@ -545,6 +553,15 @@ def main():
             flow_config = normalize_flow(flow_config)
             stages = ", ".join(flow_config["stages"])
             print(f"{name}: {stages} ({flow_config['policy']})")
+        return
+
+    if args.command == "list-checks":
+        config = load_project_config().get("checks", {})
+        for rule_id, check in CHECKS.items():
+            rule_config = config.get(rule_id, {})
+            status = "enabled" if rule_config.get("enabled", True) else "disabled"
+            severity = rule_config.get("severity", check.default_severity.value)
+            print(f"{rule_id}: {status}, {severity} - {check.description}")
         return
 
     if args.command == "sim":
@@ -604,6 +621,26 @@ def main():
             f"{result.duration_sec:.1f}s {len(result.findings)} findings"
         )
 
+        if result.status is not Status.PASS:
+            raise SystemExit(1)
+
+    if args.command == "check":
+        cfg = load_block_config(args.block)
+        stage = STAGES["checks"]
+        ctx = RunContext(run_id=stage.name, workdir=cfg["base_work_dir"] / stage.name)
+        result = stage.run(cfg, ctx, args.dry_run, ROOT)
+        remaining_findings, audit = apply_waivers(result.findings, cfg["waivers"])
+        result.findings = remaining_findings
+        if audit.expired:
+            result.status = Status.FAIL
+        elif result.status is Status.FAIL and not result.findings:
+            result.status = Status.PASS
+        for finding in result.findings:
+            print(
+                f"{finding.severity.value}: {finding.file}:{finding.line}:{finding.column}: "
+                f"{finding.message} [{finding.rule_id}]"
+            )
+        print(format_stage_line(result))
         if result.status is not Status.PASS:
             raise SystemExit(1)
 
